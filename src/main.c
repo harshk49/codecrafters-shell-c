@@ -14,7 +14,7 @@ int main(int argc, char *argv[]) {
   fgets(command, sizeof(command), stdin);
 
   // Remove newline character from input
-  command[strcspn(command, "\n")] = "\0";
+  command[strcspn(command, "\n")] = '\0';
 
   //Print error Message
   printf("%s: command not found\n", command);
