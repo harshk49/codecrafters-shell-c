@@ -9,6 +9,7 @@ int main(int argc, char *argv[]) {
   printf("$ ");
 
   // Read User's Input
+  // Allocate buffer for command
   char command[1024];
   fgets(command, sizeof(command), stdin);
 
