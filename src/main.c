@@ -25,6 +25,19 @@ while(1){
     break;
   }
 
+  //Check for echo command
+  if(strncmp(command, "echo ", 5)==0){
+    //Print everything after "echo"
+    printf("%s\n", command + 5);
+    continue;
+  }
+
+  //Handle "echo" with no arguments
+  if(strcmp(command, "echo")==0){
+      printf("\n");
+      continue;
+  }
+
   //Print error Message
   printf("%s: command not found\n", command);
 }
