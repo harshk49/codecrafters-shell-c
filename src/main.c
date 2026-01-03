@@ -40,7 +40,7 @@ while(1){
   }
 
   //Check for type command
-  if(strncmp(command, "type", 5)==0){
+  if(strncmp(command, "type ", 5)==0){
     //Get the argument after "type"
     char *arg = command + 5;
 
