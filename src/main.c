@@ -54,7 +54,7 @@ while(1){
     }
   
 
-  //Print error Message
+  //Print Error Message
   printf("%s: command not found\n", command);
 }
 
