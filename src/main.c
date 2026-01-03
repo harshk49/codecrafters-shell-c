@@ -20,6 +20,11 @@ while(1){
   // Remove newline character from input
   command[strcspn(command, "\n")] = '\0';
 
+  //Check for exit command
+  if(strcmp(command, "exit")==0){
+    break;
+  }
+
   //Print error Message
   printf("%s: command not found\n", command);
 }
