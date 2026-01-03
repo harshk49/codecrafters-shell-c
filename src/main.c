@@ -36,7 +36,23 @@ while(1){
   if(strcmp(command, "echo")==0){
       printf("\n");
       continue;
+    
   }
+
+  //Check for type command
+  if(strncmp(command, "type", 5)==0){
+    //Get the argument after "type"
+    char *arg = command + 5;
+
+    //Check if the argument is a built-in command
+    if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0){
+      printf("%s is a shell built-in command\n", arg);
+    } else {
+      printf("%s: not found\n", arg);
+    }
+      continue;
+    }
+  
 
   //Print error Message
   printf("%s: command not found\n", command);
