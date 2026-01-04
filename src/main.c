@@ -52,13 +52,25 @@ while(1){
     continue;
   }
 
+  //Check for cd command
+  if(strncmp(command, "cd ", 3)==0){
+    //Get the argument after "cd "
+    char *path = command + 3;
+    
+    //Try to change directory
+    if(chdir(path) != 0){
+      printf("cd: %s: No such file or directory\n", path);
+    }
+    continue;
+  }
+
   //Check for type command
   if(strncmp(command, "type ", 5)==0){
     //Get the argument after "type"
     char *arg = command + 5;
 
     //Check if the argument is a built-in command
-    if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0 || strcmp(arg, "pwd")==0){
+    if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0 || strcmp(arg, "pwd")==0 || strcmp(arg, "cd")==0){
       printf("%s is a shell builtin\n", arg);
       continue;  // IMPORTANT: continue here to skip PATH search
     }
