@@ -41,13 +41,24 @@ while(1){
       continue;
   }
 
+  //Check for pwd command
+  if(strcmp(command, "pwd")==0){
+    char cwd[1024];
+    if(getcwd(cwd, sizeof(cwd)) != NULL){
+      printf("%s\n", cwd);
+    } else {
+      perror("pwd");
+    }
+    continue;
+  }
+
   //Check for type command
   if(strncmp(command, "type ", 5)==0){
     //Get the argument after "type"
     char *arg = command + 5;
 
     //Check if the argument is a built-in command
-    if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0){
+    if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0 || strcmp(arg, "pwd")==0){
       printf("%s is a shell builtin\n", arg);
       continue;  // IMPORTANT: continue here to skip PATH search
     }
@@ -92,7 +103,7 @@ while(1){
   char *args[64];
   int arg_count = 0;
   char *token = strtok(command, " ");
-  while(token !=NULL && arg_count < 63){  // FIXED: Changed comma to <
+  while(token !=NULL && arg_count < 63){
     args[arg_count++] = token;
     token = strtok(NULL, " ");
   }
@@ -105,7 +116,7 @@ while(1){
   // Try to execute as external command
   char *path_env = getenv("PATH");
   if(path_env ==NULL){
-    printf("%s: command not found\n", args[0]);  // FIXED: Use args[0] instead of command
+    printf("%s: command not found\n", args[0]);
     continue; 
   }
 
