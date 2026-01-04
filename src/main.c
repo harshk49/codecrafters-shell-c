@@ -57,6 +57,14 @@ while(1){
     //Get the argument after "cd "
     char *path = command + 3;
     
+    // Handle ~ for home directory
+    if(strcmp(path, "~") == 0){
+      char *home = getenv("HOME");
+      if(home != NULL){
+        path = home;
+      }
+    }
+    
     //Try to change directory
     if(chdir(path) != 0){
       printf("cd: %s: No such file or directory\n", path);
