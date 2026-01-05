@@ -6,7 +6,7 @@
 #include <sys/wait.h>
 #include <ctype.h>
 
-// Parse command line with single quote support
+// Parse command line with single and double quote support
 int parse_command(char *input, char **args, int max_args) {
   int arg_count = 0;
   int i = 0;
@@ -26,21 +26,21 @@ int parse_command(char *input, char **args, int max_args) {
     
     // Start building a new argument
     int arg_len = 0;
-    int in_quotes = 0;
+    char quote_char = 0;  // 0 = not in quotes, '\'' = single quote, '"' = double quote
     
     // Parse the argument (may contain multiple quoted/unquoted segments)
     while (i < len) {
-      if (input[i] == '\'' && !in_quotes) {
+      if ((input[i] == '\'' || input[i] == '"') && quote_char == 0) {
         // Start of quoted section
-        in_quotes = 1;
+        quote_char = input[i];
         i++;
         continue;
-      } else if (input[i] == '\'' && in_quotes) {
+      } else if (input[i] == quote_char && quote_char != 0) {
         // End of quoted section
-        in_quotes = 0;
+        quote_char = 0;
         i++;
         continue;
-      } else if (!in_quotes && isspace(input[i])) {
+      } else if (quote_char == 0 && isspace(input[i])) {
         // End of argument (unquoted whitespace)
         break;
       } else {
@@ -51,7 +51,7 @@ int parse_command(char *input, char **args, int max_args) {
     }
     
     // Null-terminate and save the argument
-    if (arg_len > 0 || in_quotes) {  // Allow empty quotes
+    if (arg_len > 0 || quote_char != 0) {  // Allow empty quotes
       arg_buffer[buf_idx][arg_len] = '\0';
       args[arg_count++] = arg_buffer[buf_idx];
       buf_idx++;
