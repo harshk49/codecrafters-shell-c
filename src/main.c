@@ -30,6 +30,15 @@ int parse_command(char *input, char **args, int max_args) {
     
     // Parse the argument (may contain multiple quoted/unquoted segments)
     while (i < len) {
+      // Handle backslash escaping outside quotes
+      if (input[i] == '\\' && quote_char == 0 && i + 1 < len) {
+        // Skip the backslash and take the next character literally
+        i++;
+        arg_buffer[buf_idx][arg_len++] = input[i];
+        i++;
+        continue;
+      }
+      
       if ((input[i] == '\'' || input[i] == '"') && quote_char == 0) {
         // Start of quoted section
         quote_char = input[i];
