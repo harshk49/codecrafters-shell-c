@@ -4,6 +4,63 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <ctype.h>
+
+// Parse command line with single quote support
+int parse_command(char *input, char **args, int max_args) {
+  int arg_count = 0;
+  int i = 0;
+  int len = strlen(input);
+  
+  // Buffer to build current argument
+  static char arg_buffer[64][1024];  // Static storage for parsed arguments
+  int buf_idx = 0;
+  
+  while (i < len && arg_count < max_args - 1 && arg_count < 64) {
+    // Skip leading whitespace
+    while (i < len && isspace(input[i])) {
+      i++;
+    }
+    
+    if (i >= len) break;
+    
+    // Start building a new argument
+    int arg_len = 0;
+    int in_quotes = 0;
+    
+    // Parse the argument (may contain multiple quoted/unquoted segments)
+    while (i < len) {
+      if (input[i] == '\'' && !in_quotes) {
+        // Start of quoted section
+        in_quotes = 1;
+        i++;
+        continue;
+      } else if (input[i] == '\'' && in_quotes) {
+        // End of quoted section
+        in_quotes = 0;
+        i++;
+        continue;
+      } else if (!in_quotes && isspace(input[i])) {
+        // End of argument (unquoted whitespace)
+        break;
+      } else {
+        // Regular character (inside or outside quotes)
+        arg_buffer[buf_idx][arg_len++] = input[i];
+        i++;
+      }
+    }
+    
+    // Null-terminate and save the argument
+    if (arg_len > 0 || in_quotes) {  // Allow empty quotes
+      arg_buffer[buf_idx][arg_len] = '\0';
+      args[arg_count++] = arg_buffer[buf_idx];
+      buf_idx++;
+    }
+  }
+  
+  args[arg_count] = NULL;
+  return arg_count;
+}
 
 int main(int argc, char *argv[]) {
   // Flush after every printf
@@ -28,21 +85,26 @@ while(1){
     break;
   }
 
+  //Parse command and arguments with quote support
+  char *args[64];
+  int arg_count = parse_command(command, args, 64);
+
+  if(arg_count ==0){
+    continue; // No command entered
+  }
+
   //Check for echo command
-  if(strncmp(command, "echo ", 5)==0){
-    //Print everything after "echo"
-    printf("%s\n", command + 5);
+  if(strcmp(args[0], "echo")==0){
+    for(int i = 1; i < arg_count; i++){
+      if(i > 1) printf(" ");
+      printf("%s", args[i]);
+    }
+    printf("\n");
     continue;
   }
 
-  //Handle "echo" with no arguments
-  if(strcmp(command, "echo")==0){
-      printf("\n");
-      continue;
-  }
-
   //Check for pwd command
-  if(strcmp(command, "pwd")==0){
+  if(strcmp(args[0], "pwd")==0){
     char cwd[1024];
     if(getcwd(cwd, sizeof(cwd)) != NULL){
       printf("%s\n", cwd);
@@ -53,9 +115,9 @@ while(1){
   }
 
   //Check for cd command
-  if(strncmp(command, "cd ", 3)==0){
-    //Get the argument after "cd "
-    char *path = command + 3;
+  if(strcmp(args[0], "cd")==0){
+    //Get the argument after "cd"
+    char *path = arg_count > 1 ? args[1] : "~";
     
     // Handle ~ for home directory
     if(strcmp(path, "~") == 0){
@@ -73,9 +135,12 @@ while(1){
   }
 
   //Check for type command
-  if(strncmp(command, "type ", 5)==0){
+  if(strcmp(args[0], "type")==0){
     //Get the argument after "type"
-    char *arg = command + 5;
+    if(arg_count < 2){
+      continue;
+    }
+    char *arg = args[1];
 
     //Check if the argument is a built-in command
     if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0 || strcmp(arg, "pwd")==0 || strcmp(arg, "cd")==0){
@@ -117,20 +182,6 @@ while(1){
       printf("%s: not found\n", arg);
     }
     continue;  // Continue after handling type command
-  }
-
-  //Parse command and arguments
-  char *args[64];
-  int arg_count = 0;
-  char *token = strtok(command, " ");
-  while(token !=NULL && arg_count < 63){
-    args[arg_count++] = token;
-    token = strtok(NULL, " ");
-  }
-  args[arg_count] = NULL;
-
-  if(arg_count ==0){
-    continue; // No command entered
   }
 
   // Try to execute as external command
