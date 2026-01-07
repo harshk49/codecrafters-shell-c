@@ -39,6 +39,24 @@ int parse_command(char *input, char **args, int max_args) {
         continue;
       }
       
+      // Handle backslash escaping inside double quotes
+      if (input[i] == '\\' && quote_char == '"' && i + 1 < len) {
+        char next_char = input[i + 1];
+        // Within double quotes, backslash only escapes: ", \, $, `, and newline
+        // For this stage, we handle: double-quote and backslash
+        if (next_char == '"' || next_char == '\\') {
+          // Skip the backslash and take the escaped character literally
+          i++;
+          arg_buffer[buf_idx][arg_len++] = input[i];
+          i++;
+          continue;
+        }
+        // For other characters, treat backslash literally
+        arg_buffer[buf_idx][arg_len++] = input[i];
+        i++;
+        continue;
+      }
+      
       if ((input[i] == '\'' || input[i] == '"') && quote_char == 0) {
         // Start of quoted section
         quote_char = input[i];
