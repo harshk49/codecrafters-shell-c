@@ -93,24 +93,47 @@ int parse_command(char *input, char **args, int max_args) {
 // Check for output redirection and parse it
 // Modifies arg_count to remove redirection operators and filenames from args
 // Sets stdout_file and stderr_file pointers to the redirect filenames (or NULL)
-void parse_redirection(char **args, int *arg_count, char **stdout_file, char **stderr_file) {
+// Sets stdout_append and stderr_append to indicate if output should be appended
+void parse_redirection(char **args, int *arg_count, char **stdout_file, char **stderr_file,
+                       int *stdout_append, int *stderr_append) {
   *stdout_file = NULL;
   *stderr_file = NULL;
+  *stdout_append = 0;
+  *stderr_append = 0;
   
   int i = 0;
   while (i < *arg_count) {
     int is_redirect = 0;
     char **target_file = NULL;
+    int *target_append = NULL;
     
-    // Check for stdout redirection (> or 1>)
-    if (strcmp(args[i], ">") == 0 || strcmp(args[i], "1>") == 0) {
+    // Check for stdout append redirection (>> or 1>>)
+    if (strcmp(args[i], ">>") == 0 || strcmp(args[i], "1>>") == 0) {
       is_redirect = 1;
       target_file = stdout_file;
+      target_append = stdout_append;
+      *target_append = 1;
+    }
+    // Check for stdout redirection (> or 1>)
+    else if (strcmp(args[i], ">") == 0 || strcmp(args[i], "1>") == 0) {
+      is_redirect = 1;
+      target_file = stdout_file;
+      target_append = stdout_append;
+      *target_append = 0;
+    }
+    // Check for stderr append redirection (2>>)
+    else if (strcmp(args[i], "2>>") == 0) {
+      is_redirect = 1;
+      target_file = stderr_file;
+      target_append = stderr_append;
+      *target_append = 1;
     }
     // Check for stderr redirection (2>)
     else if (strcmp(args[i], "2>") == 0) {
       is_redirect = 1;
       target_file = stderr_file;
+      target_append = stderr_append;
+      *target_append = 0;
     }
     
     if (is_redirect && i + 1 < *arg_count) {
@@ -164,14 +187,17 @@ while(1){
   // Check for output and error redirection
   char *stdout_file = NULL;
   char *stderr_file = NULL;
-  parse_redirection(args, &arg_count, &stdout_file, &stderr_file);
+  int stdout_append = 0;
+  int stderr_append = 0;
+  parse_redirection(args, &arg_count, &stdout_file, &stderr_file, &stdout_append, &stderr_append);
   
   int stdout_fd = -1;
   int stderr_fd = -1;
 
   // Open files for redirection if specified
   if (stdout_file != NULL) {
-    stdout_fd = open(stdout_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int flags = O_WRONLY | O_CREAT | (stdout_append ? O_APPEND : O_TRUNC);
+    stdout_fd = open(stdout_file, flags, 0644);
     if (stdout_fd < 0) {
       perror("open");
       continue;
@@ -179,7 +205,8 @@ while(1){
   }
   
   if (stderr_file != NULL) {
-    stderr_fd = open(stderr_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int flags = O_WRONLY | O_CREAT | (stderr_append ? O_APPEND : O_TRUNC);
+    stderr_fd = open(stderr_file, flags, 0644);
     if (stderr_fd < 0) {
       perror("open");
       if (stdout_fd >= 0) close(stdout_fd);
