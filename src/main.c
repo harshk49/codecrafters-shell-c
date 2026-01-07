@@ -91,27 +91,43 @@ int parse_command(char *input, char **args, int max_args) {
 }
 
 // Check for output redirection and parse it
-// Returns the filename for redirection, or NULL if no redirection found
-// Modifies arg_count to remove redirection operator and filename from args
-char* parse_redirection(char **args, int *arg_count) {
-  for (int i = 0; i < *arg_count; i++) {
-    // Check for > or 1> operator
+// Modifies arg_count to remove redirection operators and filenames from args
+// Sets stdout_file and stderr_file pointers to the redirect filenames (or NULL)
+void parse_redirection(char **args, int *arg_count, char **stdout_file, char **stderr_file) {
+  *stdout_file = NULL;
+  *stderr_file = NULL;
+  
+  int i = 0;
+  while (i < *arg_count) {
+    int is_redirect = 0;
+    char **target_file = NULL;
+    
+    // Check for stdout redirection (> or 1>)
     if (strcmp(args[i], ">") == 0 || strcmp(args[i], "1>") == 0) {
+      is_redirect = 1;
+      target_file = stdout_file;
+    }
+    // Check for stderr redirection (2>)
+    else if (strcmp(args[i], "2>") == 0) {
+      is_redirect = 1;
+      target_file = stderr_file;
+    }
+    
+    if (is_redirect && i + 1 < *arg_count) {
       // Next argument should be the filename
-      if (i + 1 < *arg_count) {
-        char *filename = args[i + 1];
-        // Remove redirection operator and filename from args
-        // Shift remaining args (if any) and null-terminate
-        for (int j = i; j < *arg_count - 2; j++) {
-          args[j] = args[j + 2];
-        }
-        args[*arg_count - 2] = NULL;
-        *arg_count -= 2;
-        return filename;
+      *target_file = args[i + 1];
+      // Remove redirection operator and filename from args
+      // Shift remaining args
+      for (int j = i; j < *arg_count - 2; j++) {
+        args[j] = args[j + 2];
       }
+      *arg_count -= 2;
+      args[*arg_count] = NULL;
+      // Don't increment i, check the same position again
+    } else {
+      i++;
     }
   }
-  return NULL;
 }
 
 int main(int argc, char *argv[]) {
@@ -145,15 +161,28 @@ while(1){
     continue; // No command entered
   }
 
-  // Check for output redirection
-  char *redirect_file = parse_redirection(args, &arg_count);
-  int redirect_fd = -1;
+  // Check for output and error redirection
+  char *stdout_file = NULL;
+  char *stderr_file = NULL;
+  parse_redirection(args, &arg_count, &stdout_file, &stderr_file);
+  
+  int stdout_fd = -1;
+  int stderr_fd = -1;
 
-  // If redirection is specified, open the file
-  if (redirect_file != NULL) {
-    redirect_fd = open(redirect_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
-    if (redirect_fd < 0) {
+  // Open files for redirection if specified
+  if (stdout_file != NULL) {
+    stdout_fd = open(stdout_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (stdout_fd < 0) {
       perror("open");
+      continue;
+    }
+  }
+  
+  if (stderr_file != NULL) {
+    stderr_fd = open(stderr_file, O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (stderr_fd < 0) {
+      perror("open");
+      if (stdout_fd >= 0) close(stdout_fd);
       continue;
     }
   }
@@ -162,10 +191,18 @@ while(1){
   if(strcmp(args[0], "echo")==0){
     // Handle redirection for echo
     int saved_stdout = -1;
-    if (redirect_fd >= 0) {
+    int saved_stderr = -1;
+    
+    if (stdout_fd >= 0) {
       saved_stdout = dup(STDOUT_FILENO);
-      dup2(redirect_fd, STDOUT_FILENO);
-      close(redirect_fd);
+      dup2(stdout_fd, STDOUT_FILENO);
+      close(stdout_fd);
+    }
+    
+    if (stderr_fd >= 0) {
+      saved_stderr = dup(STDERR_FILENO);
+      dup2(stderr_fd, STDERR_FILENO);
+      close(stderr_fd);
     }
     
     for(int i = 1; i < arg_count; i++){
@@ -174,10 +211,14 @@ while(1){
     }
     printf("\n");
     
-    // Restore stdout if redirected
+    // Restore stdout and stderr if redirected
     if (saved_stdout >= 0) {
       dup2(saved_stdout, STDOUT_FILENO);
       close(saved_stdout);
+    }
+    if (saved_stderr >= 0) {
+      dup2(saved_stderr, STDERR_FILENO);
+      close(saved_stderr);
     }
     continue;
   }
@@ -186,10 +227,18 @@ while(1){
   if(strcmp(args[0], "pwd")==0){
     // Handle redirection for pwd
     int saved_stdout = -1;
-    if (redirect_fd >= 0) {
+    int saved_stderr = -1;
+    
+    if (stdout_fd >= 0) {
       saved_stdout = dup(STDOUT_FILENO);
-      dup2(redirect_fd, STDOUT_FILENO);
-      close(redirect_fd);
+      dup2(stdout_fd, STDOUT_FILENO);
+      close(stdout_fd);
+    }
+    
+    if (stderr_fd >= 0) {
+      saved_stderr = dup(STDERR_FILENO);
+      dup2(stderr_fd, STDERR_FILENO);
+      close(stderr_fd);
     }
     
     char cwd[1024];
@@ -199,20 +248,34 @@ while(1){
       perror("pwd");
     }
     
-    // Restore stdout if redirected
+    // Restore stdout and stderr if redirected
     if (saved_stdout >= 0) {
       dup2(saved_stdout, STDOUT_FILENO);
       close(saved_stdout);
+    }
+    if (saved_stderr >= 0) {
+      dup2(saved_stderr, STDERR_FILENO);
+      close(saved_stderr);
     }
     continue;
   }
 
   //Check for cd command
   if(strcmp(args[0], "cd")==0){
-    // cd doesn't produce output, so no redirection needed but close fd
-    if (redirect_fd >= 0) {
-      close(redirect_fd);
+    // cd produces error output, so handle stderr redirection
+    int saved_stderr = -1;
+    
+    if (stderr_fd >= 0) {
+      saved_stderr = dup(STDERR_FILENO);
+      dup2(stderr_fd, STDERR_FILENO);
+      close(stderr_fd);
     }
+    
+    // Close stdout fd if opened (cd doesn't use stdout)
+    if (stdout_fd >= 0) {
+      close(stdout_fd);
+    }
+    
     //Get the argument after "cd"
     char *path = arg_count > 1 ? args[1] : "~";
     
@@ -228,6 +291,12 @@ while(1){
     if(chdir(path) != 0){
       printf("cd: %s: No such file or directory\n", path);
     }
+    
+    // Restore stderr if redirected
+    if (saved_stderr >= 0) {
+      dup2(saved_stderr, STDERR_FILENO);
+      close(saved_stderr);
+    }
     continue;
   }
 
@@ -235,18 +304,30 @@ while(1){
   if(strcmp(args[0], "type")==0){
     // Handle redirection for type
     int saved_stdout = -1;
-    if (redirect_fd >= 0) {
+    int saved_stderr = -1;
+    
+    if (stdout_fd >= 0) {
       saved_stdout = dup(STDOUT_FILENO);
-      dup2(redirect_fd, STDOUT_FILENO);
-      close(redirect_fd);
+      dup2(stdout_fd, STDOUT_FILENO);
+      close(stdout_fd);
+    }
+    
+    if (stderr_fd >= 0) {
+      saved_stderr = dup(STDERR_FILENO);
+      dup2(stderr_fd, STDERR_FILENO);
+      close(stderr_fd);
     }
     
     //Get the argument after "type"
     if(arg_count < 2){
-      // Restore stdout if redirected
+      // Restore stdout and stderr if redirected
       if (saved_stdout >= 0) {
         dup2(saved_stdout, STDOUT_FILENO);
         close(saved_stdout);
+      }
+      if (saved_stderr >= 0) {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
       }
       continue;
     }
@@ -255,10 +336,14 @@ while(1){
     //Check if the argument is a built-in command
     if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0 || strcmp(arg, "pwd")==0 || strcmp(arg, "cd")==0){
       printf("%s is a shell builtin\n", arg);
-      // Restore stdout if redirected
+      // Restore stdout and stderr if redirected
       if (saved_stdout >= 0) {
         dup2(saved_stdout, STDOUT_FILENO);
         close(saved_stdout);
+      }
+      if (saved_stderr >= 0) {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
       }
       continue;  // IMPORTANT: continue here to skip PATH search
     }
@@ -267,10 +352,14 @@ while(1){
     char *path_env = getenv("PATH");
     if(path_env == NULL) {
       printf("%s: not found\n", arg);
-      // Restore stdout if redirected
+      // Restore stdout and stderr if redirected
       if (saved_stdout >= 0) {
         dup2(saved_stdout, STDOUT_FILENO);
         close(saved_stdout);
+      }
+      if (saved_stderr >= 0) {
+        dup2(saved_stderr, STDERR_FILENO);
+        close(saved_stderr);
       }
       continue;
     }
@@ -302,10 +391,14 @@ while(1){
       printf("%s: not found\n", arg);
     }
     
-    // Restore stdout if redirected
+    // Restore stdout and stderr if redirected
     if (saved_stdout >= 0) {
       dup2(saved_stdout, STDOUT_FILENO);
       close(saved_stdout);
+    }
+    if (saved_stderr >= 0) {
+      dup2(saved_stderr, STDERR_FILENO);
+      close(saved_stderr);
     }
     continue;  // Continue after handling type command
   }
@@ -341,10 +434,14 @@ while(1){
     pid_t pid = fork();
     if(pid == 0){
       // Child process
-      // Handle output redirection
-      if (redirect_fd >= 0) {
-        dup2(redirect_fd, STDOUT_FILENO);
-        close(redirect_fd);
+      // Handle output and error redirection
+      if (stdout_fd >= 0) {
+        dup2(stdout_fd, STDOUT_FILENO);
+        close(stdout_fd);
+      }
+      if (stderr_fd >= 0) {
+        dup2(stderr_fd, STDERR_FILENO);
+        close(stderr_fd);
       }
       execv(full_path, args);
       // If execv returns, there was an error
@@ -352,20 +449,29 @@ while(1){
       exit(1);
     } else if(pid > 0){
       // Parent process
-      if (redirect_fd >= 0) {
-        close(redirect_fd);
+      if (stdout_fd >= 0) {
+        close(stdout_fd);
+      }
+      if (stderr_fd >= 0) {
+        close(stderr_fd);
       }
       wait(NULL);
     } else {
       perror("fork");
-      if (redirect_fd >= 0) {
-        close(redirect_fd);
+      if (stdout_fd >= 0) {
+        close(stdout_fd);
+      }
+      if (stderr_fd >= 0) {
+        close(stderr_fd);
       }
     }
   } else {
     printf("%s: command not found\n", args[0]);
-    if (redirect_fd >= 0) {
-      close(redirect_fd);
+    if (stdout_fd >= 0) {
+      close(stdout_fd);
+    }
+    if (stderr_fd >= 0) {
+      close(stderr_fd);
     }
   }
 }  // End of main while loop
