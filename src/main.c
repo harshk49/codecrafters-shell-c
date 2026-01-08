@@ -7,6 +7,7 @@
 #include <ctype.h>
 #include <fcntl.h>
 #include <termios.h>
+#include <dirent.h>
 
 // Builtin commands for autocompletion
 static const char *builtin_commands[] = {
@@ -25,15 +26,60 @@ void handle_tab_completion(char *buffer, int *pos) {
     }
   }
   
-  // Find matching builtin command
   int len = *pos;
-  const char *match = NULL;
+  char matches[1024][256];  // Store potential matches
   int match_count = 0;
   
+  // Check builtin commands
   for (i = 0; builtin_commands[i] != NULL; i++) {
     if (strncmp(buffer, builtin_commands[i], len) == 0) {
-      match = builtin_commands[i];
+      strncpy(matches[match_count], builtin_commands[i], 255);
+      matches[match_count][255] = '\0';
       match_count++;
+    }
+  }
+  
+  // Check executables in PATH
+  char *path_env = getenv("PATH");
+  if (path_env != NULL) {
+    char path_copy[4096];
+    strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+    path_copy[sizeof(path_copy) - 1] = '\0';
+    
+    char *dir = strtok(path_copy, ":");
+    while (dir != NULL && match_count < 1024) {
+      DIR *d = opendir(dir);
+      if (d != NULL) {
+        struct dirent *entry;
+        while ((entry = readdir(d)) != NULL && match_count < 1024) {
+          // Check if the entry name starts with our prefix
+          if (strncmp(entry->d_name, buffer, len) == 0) {
+            // Build full path to check if it's executable
+            char full_path[2048];
+            snprintf(full_path, sizeof(full_path), "%s/%s", dir, entry->d_name);
+            
+            // Check if it's executable
+            if (access(full_path, X_OK) == 0) {
+              // Check if we already have this match (avoid duplicates)
+              int duplicate = 0;
+              for (int j = 0; j < match_count; j++) {
+                if (strcmp(matches[j], entry->d_name) == 0) {
+                  duplicate = 1;
+                  break;
+                }
+              }
+              
+              if (!duplicate) {
+                strncpy(matches[match_count], entry->d_name, 255);
+                matches[match_count][255] = '\0';
+                match_count++;
+              }
+            }
+          }
+        }
+        closedir(d);
+      }
+      dir = strtok(NULL, ":");
     }
   }
   
@@ -46,11 +92,11 @@ void handle_tab_completion(char *buffer, int *pos) {
   
   // If exactly one match, complete it
   if (match_count == 1) {
-    int match_len = strlen(match);
+    int match_len = strlen(matches[0]);
     // Copy the rest of the match
     for (i = len; i < match_len; i++) {
-      buffer[i] = match[i];
-      printf("%c", match[i]);
+      buffer[i] = matches[0][i];
+      printf("%c", matches[0][i]);
       fflush(stdout);
     }
     // Add trailing space
@@ -58,6 +104,11 @@ void handle_tab_completion(char *buffer, int *pos) {
     printf(" ");
     fflush(stdout);
     *pos = match_len + 1;
+  }
+  // If multiple matches, could ring bell or show them (for now, just ring bell)
+  else {
+    printf("\x07");
+    fflush(stdout);
   }
 }
 
