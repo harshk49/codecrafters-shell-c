@@ -37,6 +37,13 @@ void handle_tab_completion(char *buffer, int *pos) {
     }
   }
   
+  // If no matches, ring the bell
+  if (match_count == 0) {
+    printf("\x07");
+    fflush(stdout);
+    return;
+  }
+  
   // If exactly one match, complete it
   if (match_count == 1) {
     int match_len = strlen(match);
