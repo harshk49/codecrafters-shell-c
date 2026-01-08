@@ -6,6 +6,114 @@
 #include <sys/wait.h>
 #include <ctype.h>
 #include <fcntl.h>
+#include <termios.h>
+
+// Builtin commands for autocompletion
+static const char *builtin_commands[] = {
+  "echo",
+  "exit",
+  NULL
+};
+
+// Function to handle tab completion
+void handle_tab_completion(char *buffer, int *pos) {
+  // Only complete if we're at the beginning (first word)
+  int i;
+  for (i = 0; i < *pos; i++) {
+    if (buffer[i] == ' ') {
+      return; // Not the first word, don't complete
+    }
+  }
+  
+  // Find matching builtin command
+  int len = *pos;
+  const char *match = NULL;
+  int match_count = 0;
+  
+  for (i = 0; builtin_commands[i] != NULL; i++) {
+    if (strncmp(buffer, builtin_commands[i], len) == 0) {
+      match = builtin_commands[i];
+      match_count++;
+    }
+  }
+  
+  // If exactly one match, complete it
+  if (match_count == 1) {
+    int match_len = strlen(match);
+    // Copy the rest of the match
+    for (i = len; i < match_len; i++) {
+      buffer[i] = match[i];
+      printf("%c", match[i]);
+      fflush(stdout);
+    }
+    // Add trailing space
+    buffer[match_len] = ' ';
+    printf(" ");
+    fflush(stdout);
+    *pos = match_len + 1;
+  }
+}
+
+// Read input with tab completion support
+char* read_input_with_completion(const char *prompt) {
+  static char buffer[1024];
+  int pos = 0;
+  
+  printf("%s", prompt);
+  fflush(stdout);
+  
+  // Set terminal to raw mode for character-by-character input
+  struct termios old_term, new_term;
+  tcgetattr(STDIN_FILENO, &old_term);
+  new_term = old_term;
+  new_term.c_lflag &= ~(ICANON | ECHO);
+  tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
+  
+  while (1) {
+    char c;
+    if (read(STDIN_FILENO, &c, 1) != 1) {
+      // EOF or error
+      tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+      return NULL;
+    }
+    
+    if (c == '\t') {
+      // Tab key - handle completion
+      handle_tab_completion(buffer, &pos);
+    } else if (c == '\n') {
+      // Enter key
+      buffer[pos] = '\0';
+      printf("\n");
+      fflush(stdout);
+      break;
+    } else if (c == 127 || c == 8) {
+      // Backspace
+      if (pos > 0) {
+        pos--;
+        printf("\b \b");
+        fflush(stdout);
+      }
+    } else if (c == 4) {
+      // Ctrl+D (EOF)
+      if (pos == 0) {
+        tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+        return NULL;
+      }
+    } else if (c >= 32 && c < 127) {
+      // Printable character
+      if (pos < 1023) {
+        buffer[pos++] = c;
+        printf("%c", c);
+        fflush(stdout);
+      }
+    }
+  }
+  
+  // Restore terminal mode
+  tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
+  
+  return buffer;
+}
 
 // Parse command line with single and double quote support
 int parse_command(char *input, char **args, int max_args) {
@@ -154,22 +262,27 @@ void parse_redirection(char **args, int *arg_count, char **stdout_file, char **s
 }
 
 int main(int argc, char *argv[]) {
+  // Suppress unused parameter warnings
+  (void)argc;
+  (void)argv;
+  
   // Flush after every printf
   setbuf(stdout, NULL);
+  
 //REPL Loop
 while(1){
-  printf("$ ");
-
-  // Read User's Input
+  // Read User's Input with tab completion support
+  char *input = read_input_with_completion("$ ");
   
-  char command[1024];
-  if(fgets(command, sizeof(command), stdin)==NULL)
-  {
-    break; // Exit on EOF
+  // Check for EOF (Ctrl+D)
+  if(input == NULL) {
+    break;
   }
-
-  // Remove newline character from input
-  command[strcspn(command, "\n")] = '\0';
+  
+  // Copy to a separate buffer for safety
+  char command[1024];
+  strncpy(command, input, sizeof(command) - 1);
+  command[sizeof(command) - 1] = '\0';
 
   //Check for exit command
   if(strcmp(command, "exit")==0){
