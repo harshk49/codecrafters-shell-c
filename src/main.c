@@ -533,146 +533,155 @@ void execute_builtin(char **args, int arg_count) {
   }
 }
 
-// Execute a pipeline with two commands
-int execute_pipeline(char *cmd1, char *cmd2) {
-  // Parse both commands - need separate storage for each
-  static char arg_buffer1[64][1024];
-  static char arg_buffer2[64][1024];
-  char *args1[64];
-  char *args2[64];
+// Execute a pipeline with multiple commands
+int execute_pipeline_multi(char *command_line) {
+  // Split command line by pipe operators
+  char *commands[64];
+  int cmd_count = 0;
+  char *ptr = command_line;
+  char *cmd_start = command_line;
   
-  // Parse first command manually to avoid static buffer issues
-  int arg_count1 = 0;
-  int i = 0;
-  int len = strlen(cmd1);
-  
-  while (i < len && arg_count1 < 63) {
-    while (i < len && isspace(cmd1[i])) i++;
-    if (i >= len) break;
-    
-    int arg_len = 0;
-    while (i < len && !isspace(cmd1[i]) && arg_len < 1023) {
-      arg_buffer1[arg_count1][arg_len++] = cmd1[i++];
+  // Find all pipe operators and split
+  while (*ptr != '\0' && cmd_count < 64) {
+    if (*ptr == '|') {
+      *ptr = '\0';  // Null-terminate current command
+      commands[cmd_count++] = cmd_start;
+      cmd_start = ptr + 1;
     }
-    arg_buffer1[arg_count1][arg_len] = '\0';
-    args1[arg_count1] = arg_buffer1[arg_count1];
-    arg_count1++;
+    ptr++;
   }
-  args1[arg_count1] = NULL;
-  
-  // Parse second command manually
-  int arg_count2 = 0;
-  i = 0;
-  len = strlen(cmd2);
-  
-  while (i < len && arg_count2 < 63) {
-    while (i < len && isspace(cmd2[i])) i++;
-    if (i >= len) break;
-    
-    int arg_len = 0;
-    while (i < len && !isspace(cmd2[i]) && arg_len < 1023) {
-      arg_buffer2[arg_count2][arg_len++] = cmd2[i++];
-    }
-    arg_buffer2[arg_count2][arg_len] = '\0';
-    args2[arg_count2] = arg_buffer2[arg_count2];
-    arg_count2++;
+  // Add the last command
+  if (cmd_start < ptr) {
+    commands[cmd_count++] = cmd_start;
   }
-  args2[arg_count2] = NULL;
   
-  if (arg_count1 == 0 || arg_count2 == 0) {
+  if (cmd_count == 0) {
     return -1;
   }
   
-  // Check if commands are built-ins
-  int cmd1_is_builtin = is_builtin(args1[0]);
-  int cmd2_is_builtin = is_builtin(args2[0]);
+  // Parse all commands and prepare arguments
+  static char arg_buffers[64][64][1024];  // [cmd_index][arg_index][arg_content]
+  char *args[64][64];  // [cmd_index][arg_index]
+  int arg_counts[64];
+  int is_builtins[64];
+  char full_paths[64][2048];
   
-  // Find executables (only for non-built-ins)
-  char full_path1[2048];
-  char full_path2[2048];
+  for (int c = 0; c < cmd_count; c++) {
+    char *cmd = commands[c];
+    
+    // Trim leading whitespace
+    while (*cmd == ' ' || *cmd == '\t') cmd++;
+    
+    // Trim trailing whitespace
+    int len = strlen(cmd);
+    while (len > 0 && (cmd[len-1] == ' ' || cmd[len-1] == '\t')) {
+      cmd[len-1] = '\0';
+      len--;
+    }
+    
+    // Parse arguments
+    int i = 0;
+    int arg_count = 0;
+    len = strlen(cmd);
+    
+    while (i < len && arg_count < 63) {
+      while (i < len && isspace(cmd[i])) i++;
+      if (i >= len) break;
+      
+      int arg_len = 0;
+      while (i < len && !isspace(cmd[i]) && arg_len < 1023) {
+        arg_buffers[c][arg_count][arg_len++] = cmd[i++];
+      }
+      arg_buffers[c][arg_count][arg_len] = '\0';
+      args[c][arg_count] = arg_buffers[c][arg_count];
+      arg_count++;
+    }
+    args[c][arg_count] = NULL;
+    arg_counts[c] = arg_count;
+    
+    if (arg_count == 0) {
+      return -1;
+    }
+    
+    // Check if built-in and find executable path
+    is_builtins[c] = is_builtin(args[c][0]);
+    if (!is_builtins[c]) {
+      if (find_executable(args[c][0], full_paths[c], sizeof(full_paths[c])) == NULL) {
+        printf("%s: command not found\n", args[c][0]);
+        return -1;
+      }
+    }
+  }
   
-  if (!cmd1_is_builtin) {
-    if (find_executable(args1[0], full_path1, sizeof(full_path1)) == NULL) {
-      printf("%s: command not found\n", args1[0]);
+  // Create pipes (need cmd_count - 1 pipes)
+  int pipes[64][2];  // [pipe_index][read=0, write=1]
+  for (int i = 0; i < cmd_count - 1; i++) {
+    if (pipe(pipes[i]) == -1) {
+      perror("pipe");
       return -1;
     }
   }
   
-  if (!cmd2_is_builtin) {
-    if (find_executable(args2[0], full_path2, sizeof(full_path2)) == NULL) {
-      printf("%s: command not found\n", args2[0]);
+  // Fork and execute each command
+  pid_t pids[64];
+  for (int c = 0; c < cmd_count; c++) {
+    pids[c] = fork();
+    if (pids[c] == -1) {
+      perror("fork");
       return -1;
     }
-  }
-  
-  // Create pipe
-  int pipefd[2];
-  if (pipe(pipefd) == -1) {
-    perror("pipe");
-    return -1;
-  }
-  
-  // Fork first command
-  pid_t pid1 = fork();
-  if (pid1 == -1) {
-    perror("fork");
-    close(pipefd[0]);
-    close(pipefd[1]);
-    return -1;
-  }
-  
-  if (pid1 == 0) {
-    // First child process
-    // Redirect stdout to pipe write end
-    dup2(pipefd[1], STDOUT_FILENO);
-    close(pipefd[0]);  // Close unused read end
-    close(pipefd[1]);  // Close original write end
     
-    if (cmd1_is_builtin) {
-      execute_builtin(args1, arg_count1);
-      exit(0);
-    } else {
-      execv(full_path1, args1);
-      perror("execv");
-      exit(1);
+    if (pids[c] == 0) {
+      // Child process
+      
+      // Set up stdin (from previous pipe, if not first command)
+      if (c > 0) {
+        dup2(pipes[c-1][0], STDIN_FILENO);
+      }
+      
+      // Set up stdout (to next pipe, if not last command)
+      if (c < cmd_count - 1) {
+        dup2(pipes[c][1], STDOUT_FILENO);
+      }
+      
+      // Close all pipe file descriptors
+      for (int i = 0; i < cmd_count - 1; i++) {
+        close(pipes[i][0]);
+        close(pipes[i][1]);
+      }
+      
+      // Execute command (built-in or external)
+      if (is_builtins[c]) {
+        execute_builtin(args[c], arg_counts[c]);
+        exit(0);
+      } else {
+        execv(full_paths[c], args[c]);
+        perror("execv");
+        exit(1);
+      }
     }
   }
   
-  // Fork second command
-  pid_t pid2 = fork();
-  if (pid2 == -1) {
-    perror("fork");
-    close(pipefd[0]);
-    close(pipefd[1]);
-    return -1;
+  // Parent process: close all pipes
+  for (int i = 0; i < cmd_count - 1; i++) {
+    close(pipes[i][0]);
+    close(pipes[i][1]);
   }
   
-  if (pid2 == 0) {
-    // Second child process
-    // Redirect stdin to pipe read end
-    dup2(pipefd[0], STDIN_FILENO);
-    close(pipefd[1]);  // Close unused write end
-    close(pipefd[0]);  // Close original read end
-    
-    if (cmd2_is_builtin) {
-      execute_builtin(args2, arg_count2);
-      exit(0);
-    } else {
-      execv(full_path2, args2);
-      perror("execv");
-      exit(1);
-    }
+  // Wait for all children
+  for (int c = 0; c < cmd_count; c++) {
+    waitpid(pids[c], NULL, 0);
   }
-  
-  // Parent process
-  close(pipefd[0]);
-  close(pipefd[1]);
-  
-  // Wait for both children
-  waitpid(pid1, NULL, 0);
-  waitpid(pid2, NULL, 0);
   
   return 0;
+}
+
+// Execute a pipeline with two commands (kept for backward compatibility, now just calls multi version)
+int execute_pipeline(char *cmd1, char *cmd2) {
+  // Reconstruct the pipeline command
+  static char combined[2048];
+  snprintf(combined, sizeof(combined), "%s | %s", cmd1, cmd2);
+  return execute_pipeline_multi(combined);
 }
 
 int main(int argc, char *argv[]) {
@@ -706,25 +715,8 @@ while(1){
   // Check for pipe operator
   char *pipe_pos = strchr(command, '|');
   if (pipe_pos != NULL) {
-    // Split the command at the pipe
-    *pipe_pos = '\0';  // Null-terminate the first command
-    char *cmd1 = command;
-    char *cmd2 = pipe_pos + 1;
-    
-    // Trim leading whitespace from cmd2
-    while (*cmd2 == ' ' || *cmd2 == '\t') {
-      cmd2++;
-    }
-    
-    // Trim trailing whitespace from cmd1
-    char *end = pipe_pos - 1;
-    while (end > cmd1 && (*end == ' ' || *end == '\t')) {
-      *end = '\0';
-      end--;
-    }
-    
-    // Execute pipeline
-    execute_pipeline(cmd1, cmd2);
+    // Has pipeline - use multi-command pipeline executor
+    execute_pipeline_multi(command);
     continue;
   }
 
