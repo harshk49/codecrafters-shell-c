@@ -436,6 +436,115 @@ void parse_redirection(char **args, int *arg_count, char **stdout_file, char **s
   }
 }
 
+// Function to find the executable path in PATH
+char* find_executable(const char *command, char *full_path, size_t path_size) {
+  char *path_env = getenv("PATH");
+  if (path_env == NULL) {
+    return NULL;
+  }
+  
+  char path_copy[4096];
+  strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+  path_copy[sizeof(path_copy) - 1] = '\0';
+  
+  char *dir = strtok(path_copy, ":");
+  while (dir != NULL) {
+    snprintf(full_path, path_size, "%s/%s", dir, command);
+    if (access(full_path, X_OK) == 0) {
+      return full_path;
+    }
+    dir = strtok(NULL, ":");
+  }
+  
+  return NULL;
+}
+
+// Execute a pipeline with two commands
+int execute_pipeline(char *cmd1, char *cmd2) {
+  // Parse both commands
+  char *args1[64];
+  char *args2[64];
+  int arg_count1 = parse_command(cmd1, args1, 64);
+  int arg_count2 = parse_command(cmd2, args2, 64);
+  
+  if (arg_count1 == 0 || arg_count2 == 0) {
+    return -1;
+  }
+  
+  // Find executables
+  char full_path1[2048];
+  char full_path2[2048];
+  
+  if (find_executable(args1[0], full_path1, sizeof(full_path1)) == NULL) {
+    printf("%s: command not found\n", args1[0]);
+    return -1;
+  }
+  
+  if (find_executable(args2[0], full_path2, sizeof(full_path2)) == NULL) {
+    printf("%s: command not found\n", args2[0]);
+    return -1;
+  }
+  
+  // Create pipe
+  int pipefd[2];
+  if (pipe(pipefd) == -1) {
+    perror("pipe");
+    return -1;
+  }
+  
+  // Fork first command
+  pid_t pid1 = fork();
+  if (pid1 == -1) {
+    perror("fork");
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return -1;
+  }
+  
+  if (pid1 == 0) {
+    // First child process
+    // Redirect stdout to pipe write end
+    dup2(pipefd[1], STDOUT_FILENO);
+    close(pipefd[0]);  // Close unused read end
+    close(pipefd[1]);  // Close original write end
+    
+    execv(full_path1, args1);
+    perror("execv");
+    exit(1);
+  }
+  
+  // Fork second command
+  pid_t pid2 = fork();
+  if (pid2 == -1) {
+    perror("fork");
+    close(pipefd[0]);
+    close(pipefd[1]);
+    return -1;
+  }
+  
+  if (pid2 == 0) {
+    // Second child process
+    // Redirect stdin to pipe read end
+    dup2(pipefd[0], STDIN_FILENO);
+    close(pipefd[1]);  // Close unused write end
+    close(pipefd[0]);  // Close original read end
+    
+    execv(full_path2, args2);
+    perror("execv");
+    exit(1);
+  }
+  
+  // Parent process
+  close(pipefd[0]);
+  close(pipefd[1]);
+  
+  // Wait for both children
+  waitpid(pid1, NULL, 0);
+  waitpid(pid2, NULL, 0);
+  
+  return 0;
+}
+
 int main(int argc, char *argv[]) {
   // Suppress unused parameter warnings
   (void)argc;
@@ -462,6 +571,19 @@ while(1){
   //Check for exit command
   if(strcmp(command, "exit")==0){
     break;
+  }
+
+  // Check for pipe operator
+  char *pipe_pos = strchr(command, '|');
+  if (pipe_pos != NULL) {
+    // Split the command at the pipe
+    *pipe_pos = '\0';  // Null-terminate the first command
+    char *cmd1 = command;
+    char *cmd2 = pipe_pos + 1;
+    
+    // Execute pipeline
+    execute_pipeline(cmd1, cmd2);
+    continue;
   }
 
   //Parse command and arguments with quote support
