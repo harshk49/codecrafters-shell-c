@@ -459,6 +459,80 @@ char* find_executable(const char *command, char *full_path, size_t path_size) {
   return NULL;
 }
 
+// Check if a command is a built-in
+int is_builtin(const char *cmd) {
+  return (strcmp(cmd, "echo") == 0 || 
+          strcmp(cmd, "exit") == 0 || 
+          strcmp(cmd, "type") == 0 || 
+          strcmp(cmd, "pwd") == 0 || 
+          strcmp(cmd, "cd") == 0);
+}
+
+// Execute a built-in command with given arguments
+void execute_builtin(char **args, int arg_count) {
+  if (strcmp(args[0], "echo") == 0) {
+    for (int i = 1; i < arg_count; i++) {
+      if (i > 1) printf(" ");
+      // Handle escape sequences
+      char *str = args[i];
+      for (int j = 0; str[j] != '\0'; j++) {
+        if (str[j] == '\\' && str[j+1] == 'n') {
+          printf("\n");
+          j++;
+        } else {
+          printf("%c", str[j]);
+        }
+      }
+    }
+    printf("\n");
+  } else if (strcmp(args[0], "pwd") == 0) {
+    char cwd[1024];
+    if (getcwd(cwd, sizeof(cwd)) != NULL) {
+      printf("%s\n", cwd);
+    }
+  } else if (strcmp(args[0], "type") == 0) {
+    if (arg_count < 2) {
+      return;
+    }
+    char *arg = args[1];
+    
+    if (is_builtin(arg)) {
+      printf("%s is a shell builtin\n", arg);
+    } else {
+      // Search for executable in PATH
+      char *path_env = getenv("PATH");
+      if (path_env == NULL) {
+        printf("%s: not found\n", arg);
+        return;
+      }
+      
+      char path_copy[4096];
+      strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+      path_copy[sizeof(path_copy) - 1] = '\0';
+      
+      char *dir = strtok(path_copy, ":");
+      int found = 0;
+      
+      while (dir != NULL) {
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir, arg);
+        
+        if (access(full_path, X_OK) == 0) {
+          printf("%s is %s\n", arg, full_path);
+          found = 1;
+          break;
+        }
+        
+        dir = strtok(NULL, ":");
+      }
+      
+      if (!found) {
+        printf("%s: not found\n", arg);
+      }
+    }
+  }
+}
+
 // Execute a pipeline with two commands
 int execute_pipeline(char *cmd1, char *cmd2) {
   // Parse both commands - need separate storage for each
@@ -509,18 +583,26 @@ int execute_pipeline(char *cmd1, char *cmd2) {
     return -1;
   }
   
-  // Find executables
+  // Check if commands are built-ins
+  int cmd1_is_builtin = is_builtin(args1[0]);
+  int cmd2_is_builtin = is_builtin(args2[0]);
+  
+  // Find executables (only for non-built-ins)
   char full_path1[2048];
   char full_path2[2048];
   
-  if (find_executable(args1[0], full_path1, sizeof(full_path1)) == NULL) {
-    printf("%s: command not found\n", args1[0]);
-    return -1;
+  if (!cmd1_is_builtin) {
+    if (find_executable(args1[0], full_path1, sizeof(full_path1)) == NULL) {
+      printf("%s: command not found\n", args1[0]);
+      return -1;
+    }
   }
   
-  if (find_executable(args2[0], full_path2, sizeof(full_path2)) == NULL) {
-    printf("%s: command not found\n", args2[0]);
-    return -1;
+  if (!cmd2_is_builtin) {
+    if (find_executable(args2[0], full_path2, sizeof(full_path2)) == NULL) {
+      printf("%s: command not found\n", args2[0]);
+      return -1;
+    }
   }
   
   // Create pipe
@@ -546,9 +628,14 @@ int execute_pipeline(char *cmd1, char *cmd2) {
     close(pipefd[0]);  // Close unused read end
     close(pipefd[1]);  // Close original write end
     
-    execv(full_path1, args1);
-    perror("execv");
-    exit(1);
+    if (cmd1_is_builtin) {
+      execute_builtin(args1, arg_count1);
+      exit(0);
+    } else {
+      execv(full_path1, args1);
+      perror("execv");
+      exit(1);
+    }
   }
   
   // Fork second command
@@ -567,9 +654,14 @@ int execute_pipeline(char *cmd1, char *cmd2) {
     close(pipefd[1]);  // Close unused write end
     close(pipefd[0]);  // Close original read end
     
-    execv(full_path2, args2);
-    perror("execv");
-    exit(1);
+    if (cmd2_is_builtin) {
+      execute_builtin(args2, arg_count2);
+      exit(0);
+    } else {
+      execv(full_path2, args2);
+      perror("execv");
+      exit(1);
+    }
   }
   
   // Parent process
