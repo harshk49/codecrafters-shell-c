@@ -461,11 +461,49 @@ char* find_executable(const char *command, char *full_path, size_t path_size) {
 
 // Execute a pipeline with two commands
 int execute_pipeline(char *cmd1, char *cmd2) {
-  // Parse both commands
+  // Parse both commands - need separate storage for each
+  static char arg_buffer1[64][1024];
+  static char arg_buffer2[64][1024];
   char *args1[64];
   char *args2[64];
-  int arg_count1 = parse_command(cmd1, args1, 64);
-  int arg_count2 = parse_command(cmd2, args2, 64);
+  
+  // Parse first command manually to avoid static buffer issues
+  int arg_count1 = 0;
+  int i = 0;
+  int len = strlen(cmd1);
+  
+  while (i < len && arg_count1 < 63) {
+    while (i < len && isspace(cmd1[i])) i++;
+    if (i >= len) break;
+    
+    int arg_len = 0;
+    while (i < len && !isspace(cmd1[i]) && arg_len < 1023) {
+      arg_buffer1[arg_count1][arg_len++] = cmd1[i++];
+    }
+    arg_buffer1[arg_count1][arg_len] = '\0';
+    args1[arg_count1] = arg_buffer1[arg_count1];
+    arg_count1++;
+  }
+  args1[arg_count1] = NULL;
+  
+  // Parse second command manually
+  int arg_count2 = 0;
+  i = 0;
+  len = strlen(cmd2);
+  
+  while (i < len && arg_count2 < 63) {
+    while (i < len && isspace(cmd2[i])) i++;
+    if (i >= len) break;
+    
+    int arg_len = 0;
+    while (i < len && !isspace(cmd2[i]) && arg_len < 1023) {
+      arg_buffer2[arg_count2][arg_len++] = cmd2[i++];
+    }
+    arg_buffer2[arg_count2][arg_len] = '\0';
+    args2[arg_count2] = arg_buffer2[arg_count2];
+    arg_count2++;
+  }
+  args2[arg_count2] = NULL;
   
   if (arg_count1 == 0 || arg_count2 == 0) {
     return -1;
@@ -580,6 +618,18 @@ while(1){
     *pipe_pos = '\0';  // Null-terminate the first command
     char *cmd1 = command;
     char *cmd2 = pipe_pos + 1;
+    
+    // Trim leading whitespace from cmd2
+    while (*cmd2 == ' ' || *cmd2 == '\t') {
+      cmd2++;
+    }
+    
+    // Trim trailing whitespace from cmd1
+    char *end = pipe_pos - 1;
+    while (end > cmd1 && (*end == ' ' || *end == '\t')) {
+      *end = '\0';
+      end--;
+    }
     
     // Execute pipeline
     execute_pipeline(cmd1, cmd2);
