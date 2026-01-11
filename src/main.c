@@ -16,17 +16,37 @@ static const char *builtin_commands[] = {
   NULL
 };
 
+// Compare function for qsort to sort strings alphabetically
+int string_compare(const void *a, const void *b) {
+  return strcmp(*(const char **)a, *(const char **)b);
+}
+
 // Function to handle tab completion
-void handle_tab_completion(char *buffer, int *pos) {
+void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_prefix, int *last_prefix_len) {
   // Only complete if we're at the beginning (first word)
   int i;
   for (i = 0; i < *pos; i++) {
     if (buffer[i] == ' ') {
+      *tab_count = 0;  // Reset tab count if we're not on first word
       return; // Not the first word, don't complete
     }
   }
   
   int len = *pos;
+  
+  // Check if the prefix has changed since last tab press
+  if (len != *last_prefix_len || strncmp(buffer, last_prefix, len) != 0) {
+    *tab_count = 0;  // Reset tab count if prefix changed
+  }
+  
+  // Increment tab count
+  (*tab_count)++;
+  
+  // Save current prefix
+  strncpy(last_prefix, buffer, len);
+  last_prefix[len] = '\0';
+  *last_prefix_len = len;
+  
   char matches[1024][256];  // Store potential matches
   int match_count = 0;
   
@@ -87,6 +107,7 @@ void handle_tab_completion(char *buffer, int *pos) {
   if (match_count == 0) {
     printf("\x07");
     fflush(stdout);
+    *tab_count = 0;  // Reset tab count
     return;
   }
   
@@ -104,17 +125,51 @@ void handle_tab_completion(char *buffer, int *pos) {
     printf(" ");
     fflush(stdout);
     *pos = match_len + 1;
+    *tab_count = 0;  // Reset tab count after completion
   }
-  // If multiple matches, could ring bell or show them (for now, just ring bell)
+  // If multiple matches, handle based on tab count
   else {
-    printf("\x07");
-    fflush(stdout);
+    if (*tab_count == 1) {
+      // First tab: ring the bell
+      printf("\x07");
+      fflush(stdout);
+    } else if (*tab_count >= 2) {
+      // Second tab: display all matches
+      // Sort matches alphabetically
+      char *match_ptrs[1024];
+      for (i = 0; i < match_count; i++) {
+        match_ptrs[i] = matches[i];
+      }
+      qsort(match_ptrs, match_count, sizeof(char *), string_compare);
+      
+      // Print newline and display matches
+      printf("\n");
+      for (i = 0; i < match_count; i++) {
+        if (i > 0) {
+          printf("  ");  // Two spaces between matches
+        }
+        printf("%s", match_ptrs[i]);
+      }
+      printf("\n");
+      
+      // Redisplay prompt and current command
+      printf("$ ");
+      for (i = 0; i < *pos; i++) {
+        printf("%c", buffer[i]);
+      }
+      fflush(stdout);
+      
+      *tab_count = 0;  // Reset tab count after displaying matches
+    }
   }
 }
 
 // Read input with tab completion support
 char* read_input_with_completion(const char *prompt) {
   static char buffer[1024];
+  static int tab_count = 0;
+  static char last_prefix[1024];
+  static int last_prefix_len = 0;
   int pos = 0;
   
   printf("%s", prompt);
@@ -137,12 +192,13 @@ char* read_input_with_completion(const char *prompt) {
     
     if (c == '\t') {
       // Tab key - handle completion
-      handle_tab_completion(buffer, &pos);
+      handle_tab_completion(buffer, &pos, &tab_count, last_prefix, &last_prefix_len);
     } else if (c == '\n') {
       // Enter key
       buffer[pos] = '\0';
       printf("\n");
       fflush(stdout);
+      tab_count = 0;  // Reset tab count on enter
       break;
     } else if (c == 127 || c == 8) {
       // Backspace
@@ -150,6 +206,7 @@ char* read_input_with_completion(const char *prompt) {
         pos--;
         printf("\b \b");
         fflush(stdout);
+        tab_count = 0;  // Reset tab count on any other input
       }
     } else if (c == 4) {
       // Ctrl+D (EOF)
@@ -163,6 +220,7 @@ char* read_input_with_completion(const char *prompt) {
         buffer[pos++] = c;
         printf("%c", c);
         fflush(stdout);
+        tab_count = 0;  // Reset tab count on any other input
       }
     }
   }
