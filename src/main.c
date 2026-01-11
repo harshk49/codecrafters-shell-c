@@ -21,6 +21,46 @@ int string_compare(const void *a, const void *b) {
   return strcmp(*(const char **)a, *(const char **)b);
 }
 
+// Calculate longest common prefix of all strings in the array
+int find_longest_common_prefix(char **matches, int match_count, char *lcp, int max_len) {
+  if (match_count == 0) {
+    lcp[0] = '\0';
+    return 0;
+  }
+  
+  if (match_count == 1) {
+    strncpy(lcp, matches[0], max_len - 1);
+    lcp[max_len - 1] = '\0';
+    return strlen(lcp);
+  }
+  
+  // Start with the first string as the base
+  int lcp_len = 0;
+  int first_len = strlen(matches[0]);
+  
+  for (int i = 0; i < first_len && lcp_len < max_len - 1; i++) {
+    char c = matches[0][i];
+    
+    // Check if all other strings have the same character at this position
+    int all_match = 1;
+    for (int j = 1; j < match_count; j++) {
+      if (i >= strlen(matches[j]) || matches[j][i] != c) {
+        all_match = 0;
+        break;
+      }
+    }
+    
+    if (!all_match) {
+      break;
+    }
+    
+    lcp[lcp_len++] = c;
+  }
+  
+  lcp[lcp_len] = '\0';
+  return lcp_len;
+}
+
 // Function to handle tab completion
 void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_prefix, int *last_prefix_len) {
   // Only complete if we're at the beginning (first word)
@@ -127,39 +167,58 @@ void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_pr
     *pos = match_len + 1;
     *tab_count = 0;  // Reset tab count after completion
   }
-  // If multiple matches, handle based on tab count
+  // If multiple matches, try to complete to longest common prefix
   else {
-    if (*tab_count == 1) {
-      // First tab: ring the bell
-      printf("\x07");
-      fflush(stdout);
-    } else if (*tab_count >= 2) {
-      // Second tab: display all matches
-      // Sort matches alphabetically
-      char *match_ptrs[1024];
-      for (i = 0; i < match_count; i++) {
-        match_ptrs[i] = matches[i];
+    // Find longest common prefix
+    char *match_ptrs[1024];
+    for (i = 0; i < match_count; i++) {
+      match_ptrs[i] = matches[i];
+    }
+    
+    char lcp[256];
+    int lcp_len = find_longest_common_prefix(match_ptrs, match_count, lcp, sizeof(lcp));
+    
+    // If LCP is longer than current input, complete to LCP
+    if (lcp_len > len) {
+      // Complete to LCP
+      for (i = len; i < lcp_len; i++) {
+        buffer[i] = lcp[i];
+        printf("%c", lcp[i]);
+        fflush(stdout);
       }
-      qsort(match_ptrs, match_count, sizeof(char *), string_compare);
-      
-      // Print newline and display matches
-      printf("\n");
-      for (i = 0; i < match_count; i++) {
-        if (i > 0) {
-          printf("  ");  // Two spaces between matches
+      *pos = lcp_len;
+      *tab_count = 0;  // Reset tab count after completion
+    }
+    // Otherwise, handle double-tab behavior
+    else {
+      if (*tab_count == 1) {
+        // First tab: ring the bell
+        printf("\x07");
+        fflush(stdout);
+      } else if (*tab_count >= 2) {
+        // Second tab: display all matches
+        // Sort matches alphabetically
+        qsort(match_ptrs, match_count, sizeof(char *), string_compare);
+        
+        // Print newline and display matches
+        printf("\n");
+        for (i = 0; i < match_count; i++) {
+          if (i > 0) {
+            printf("  ");  // Two spaces between matches
+          }
+          printf("%s", match_ptrs[i]);
         }
-        printf("%s", match_ptrs[i]);
+        printf("\n");
+        
+        // Redisplay prompt and current command
+        printf("$ ");
+        for (i = 0; i < *pos; i++) {
+          printf("%c", buffer[i]);
+        }
+        fflush(stdout);
+        
+        *tab_count = 0;  // Reset tab count after displaying matches
       }
-      printf("\n");
-      
-      // Redisplay prompt and current command
-      printf("$ ");
-      for (i = 0; i < *pos; i++) {
-        printf("%c", buffer[i]);
-      }
-      fflush(stdout);
-      
-      *tab_count = 0;  // Reset tab count after displaying matches
     }
   }
 }
