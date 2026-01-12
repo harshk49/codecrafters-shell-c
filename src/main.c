@@ -234,6 +234,20 @@ char* read_input_with_completion(const char *prompt) {
   printf("%s", prompt);
   fflush(stdout);
   
+  // Check if stdin is a terminal (interactive mode)
+  if (!isatty(STDIN_FILENO)) {
+    // Non-interactive mode: use regular fgets
+    if (fgets(buffer, sizeof(buffer), stdin) == NULL) {
+      return NULL;
+    }
+    // Remove trailing newline
+    size_t len = strlen(buffer);
+    if (len > 0 && buffer[len-1] == '\n') {
+      buffer[len-1] = '\0';
+    }
+    return buffer;
+  }
+  
   // Set terminal to raw mode for character-by-character input
   struct termios old_term, new_term;
   tcgetattr(STDIN_FILENO, &old_term);
@@ -560,7 +574,8 @@ int execute_pipeline_multi(char *command_line) {
   }
   
   // Parse all commands and prepare arguments
-  static char arg_buffers[64][64][1024];  // [cmd_index][arg_index][arg_content]
+  // We need separate storage for each command's arguments because parse_command uses static buffers
+  static char pipeline_arg_buffers[64][64][1024];  // [cmd_index][arg_index][arg_content]
   char *args[64][64];  // [cmd_index][arg_index]
   int arg_counts[64];
   int is_builtins[64];
@@ -579,22 +594,15 @@ int execute_pipeline_multi(char *command_line) {
       len--;
     }
     
-    // Parse arguments
-    int i = 0;
-    int arg_count = 0;
-    len = strlen(cmd);
+    // Parse arguments using the existing parse_command function that handles quotes
+    char *cmd_args[64];
+    int arg_count = parse_command(cmd, cmd_args, 64);
     
-    while (i < len && arg_count < 63) {
-      while (i < len && isspace(cmd[i])) i++;
-      if (i >= len) break;
-      
-      int arg_len = 0;
-      while (i < len && !isspace(cmd[i]) && arg_len < 1023) {
-        arg_buffers[c][arg_count][arg_len++] = cmd[i++];
-      }
-      arg_buffers[c][arg_count][arg_len] = '\0';
-      args[c][arg_count] = arg_buffers[c][arg_count];
-      arg_count++;
+    // Copy the parsed arguments to our own storage (because parse_command uses static buffers)
+    for (int i = 0; i < arg_count && i < 64; i++) {
+      strncpy(pipeline_arg_buffers[c][i], cmd_args[i], 1023);
+      pipeline_arg_buffers[c][i][1023] = '\0';
+      args[c][i] = pipeline_arg_buffers[c][i];
     }
     args[c][arg_count] = NULL;
     arg_counts[c] = arg_count;
