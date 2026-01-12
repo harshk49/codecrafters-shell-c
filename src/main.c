@@ -13,8 +13,14 @@
 static const char *builtin_commands[] = {
   "echo",
   "exit",
+  "history",
   NULL
 };
+
+// Command history storage
+#define MAX_HISTORY 1000
+static char history_commands[MAX_HISTORY][1024];
+static int history_count = 0;
 
 // Compare function for qsort to sort strings alphabetically
 int string_compare(const void *a, const void *b) {
@@ -479,7 +485,8 @@ int is_builtin(const char *cmd) {
           strcmp(cmd, "exit") == 0 || 
           strcmp(cmd, "type") == 0 || 
           strcmp(cmd, "pwd") == 0 || 
-          strcmp(cmd, "cd") == 0);
+          strcmp(cmd, "cd") == 0 || 
+          strcmp(cmd, "history") == 0);
 }
 
 // Execute a built-in command with given arguments
@@ -503,6 +510,10 @@ void execute_builtin(char **args, int arg_count) {
     char cwd[1024];
     if (getcwd(cwd, sizeof(cwd)) != NULL) {
       printf("%s\n", cwd);
+    }
+  } else if (strcmp(args[0], "history") == 0) {
+    for (int i = 0; i < history_count; i++) {
+      printf("%5d  %s\n", i + 1, history_commands[i]);
     }
   } else if (strcmp(args[0], "type") == 0) {
     if (arg_count < 2) {
@@ -715,6 +726,13 @@ while(1){
   strncpy(command, input, sizeof(command) - 1);
   command[sizeof(command) - 1] = '\0';
 
+  // Store command in history (before checking for exit)
+  if (strlen(command) > 0 && history_count < MAX_HISTORY) {
+    strncpy(history_commands[history_count], command, sizeof(history_commands[history_count]) - 1);
+    history_commands[history_count][sizeof(history_commands[history_count]) - 1] = '\0';
+    history_count++;
+  }
+
   //Check for exit command
   if(strcmp(command, "exit")==0){
     break;
@@ -879,6 +897,40 @@ while(1){
     continue;
   }
 
+  //Check for history command
+  if(strcmp(args[0], "history")==0){
+    // Handle redirection for history
+    int saved_stdout = -1;
+    int saved_stderr = -1;
+    
+    if (stdout_fd >= 0) {
+      saved_stdout = dup(STDOUT_FILENO);
+      dup2(stdout_fd, STDOUT_FILENO);
+      close(stdout_fd);
+    }
+    
+    if (stderr_fd >= 0) {
+      saved_stderr = dup(STDERR_FILENO);
+      dup2(stderr_fd, STDERR_FILENO);
+      close(stderr_fd);
+    }
+    
+    for (int i = 0; i < history_count; i++) {
+      printf("%5d  %s\n", i + 1, history_commands[i]);
+    }
+    
+    // Restore stdout and stderr if redirected
+    if (saved_stdout >= 0) {
+      dup2(saved_stdout, STDOUT_FILENO);
+      close(saved_stdout);
+    }
+    if (saved_stderr >= 0) {
+      dup2(saved_stderr, STDERR_FILENO);
+      close(saved_stderr);
+    }
+    continue;
+  }
+
   //Check for type command
   if(strcmp(args[0], "type")==0){
     // Handle redirection for type
@@ -913,7 +965,7 @@ while(1){
     char *arg = args[1];
 
     //Check if the argument is a built-in command
-    if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0 || strcmp(arg, "pwd")==0 || strcmp(arg, "cd")==0){
+    if(strcmp(arg, "echo") ==0 || strcmp(arg, "exit") ==0 || strcmp(arg, "type")==0 || strcmp(arg, "pwd")==0 || strcmp(arg, "cd")==0 || strcmp(arg, "history")==0){
       printf("%s is a shell builtin\n", arg);
       // Restore stdout and stderr if redirected
       if (saved_stdout >= 0) {
