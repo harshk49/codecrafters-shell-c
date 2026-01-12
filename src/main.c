@@ -229,12 +229,14 @@ void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_pr
   }
 }
 
-// Read input with tab completion support
+// Read input with tab completion and arrow key support
 char* read_input_with_completion(const char *prompt) {
   static char buffer[1024];
   static int tab_count = 0;
   static char last_prefix[1024];
   static int last_prefix_len = 0;
+  static int history_position = -1;  // -1 means not navigating history
+  static char current_input[1024];   // Store current input when navigating history
   int pos = 0;
   
   printf("%s", prompt);
@@ -261,12 +263,77 @@ char* read_input_with_completion(const char *prompt) {
   new_term.c_lflag &= ~(ICANON | ECHO);
   tcsetattr(STDIN_FILENO, TCSANOW, &new_term);
   
+  history_position = -1;  // Reset history position
+  
   while (1) {
     char c;
     if (read(STDIN_FILENO, &c, 1) != 1) {
       // EOF or error
       tcsetattr(STDIN_FILENO, TCSANOW, &old_term);
       return NULL;
+    }
+    
+    // Handle escape sequences (arrow keys)
+    if (c == 27) {  // ESC
+      char seq[2];
+      if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
+      if (read(STDIN_FILENO, &seq[1], 1) != 1) break;
+      
+      if (seq[0] == '[') {
+        if (seq[1] == 'A') {
+          // Up arrow - navigate to previous command
+          if (history_count > 0) {
+            if (history_position == -1) {
+              // Save current input
+              strncpy(current_input, buffer, pos);
+              current_input[pos] = '\0';
+              history_position = history_count - 1;
+            } else if (history_position > 0) {
+              history_position--;
+            }
+            
+            // Clear current line
+            while (pos > 0) {
+              printf("\b \b");
+              pos--;
+            }
+            
+            // Display history command
+            strcpy(buffer, history_commands[history_position]);
+            pos = strlen(buffer);
+            printf("%s", buffer);
+            fflush(stdout);
+          }
+          tab_count = 0;
+          continue;
+        } else if (seq[1] == 'B') {
+          // Down arrow - navigate to next command
+          if (history_position != -1) {
+            // Clear current line
+            while (pos > 0) {
+              printf("\b \b");
+              pos--;
+            }
+            
+            if (history_position < history_count - 1) {
+              history_position++;
+              strcpy(buffer, history_commands[history_position]);
+              pos = strlen(buffer);
+              printf("%s", buffer);
+            } else {
+              // Restore original input
+              history_position = -1;
+              strcpy(buffer, current_input);
+              pos = strlen(buffer);
+              printf("%s", buffer);
+            }
+            fflush(stdout);
+          }
+          tab_count = 0;
+          continue;
+        }
+      }
+      continue;
     }
     
     if (c == '\t') {
@@ -278,6 +345,7 @@ char* read_input_with_completion(const char *prompt) {
       printf("\n");
       fflush(stdout);
       tab_count = 0;  // Reset tab count on enter
+      history_position = -1;  // Reset history position
       break;
     } else if (c == 127 || c == 8) {
       // Backspace
@@ -286,6 +354,7 @@ char* read_input_with_completion(const char *prompt) {
         printf("\b \b");
         fflush(stdout);
         tab_count = 0;  // Reset tab count on any other input
+        history_position = -1;  // Reset history position when editing
       }
     } else if (c == 4) {
       // Ctrl+D (EOF)
@@ -300,6 +369,7 @@ char* read_input_with_completion(const char *prompt) {
         printf("%c", c);
         fflush(stdout);
         tab_count = 0;  // Reset tab count on any other input
+        history_position = -1;  // Reset history position when editing
       }
     }
   }
