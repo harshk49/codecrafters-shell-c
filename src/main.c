@@ -512,7 +512,21 @@ void execute_builtin(char **args, int arg_count) {
       printf("%s\n", cwd);
     }
   } else if (strcmp(args[0], "history") == 0) {
-    for (int i = 0; i < history_count; i++) {
+    // Check if there's a limit argument
+    int limit = history_count;
+    int start_index = 0;
+    
+    if (arg_count > 1) {
+      // Parse the limit
+      limit = atoi(args[1]);
+      if (limit > 0 && limit < history_count) {
+        start_index = history_count - limit;
+      } else {
+        start_index = 0;
+      }
+    }
+    
+    for (int i = start_index; i < history_count; i++) {
       printf("%5d  %s\n", i + 1, history_commands[i]);
     }
   } else if (strcmp(args[0], "type") == 0) {
@@ -915,7 +929,21 @@ while(1){
       close(stderr_fd);
     }
     
-    for (int i = 0; i < history_count; i++) {
+    // Check if there's a limit argument
+    int limit = history_count;
+    int start_index = 0;
+    
+    if (arg_count > 1) {
+      // Parse the limit
+      limit = atoi(args[1]);
+      if (limit > 0 && limit < history_count) {
+        start_index = history_count - limit;
+      } else {
+        start_index = 0;
+      }
+    }
+    
+    for (int i = start_index; i < history_count; i++) {
       printf("%5d  %s\n", i + 1, history_commands[i]);
     }
     
