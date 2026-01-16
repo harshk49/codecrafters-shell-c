@@ -613,6 +613,28 @@ void execute_builtin(char **args, int arg_count) {
       
       fclose(file);
       return; // Don't print history after reading from file
+    } else if (arg_count > 1 && strcmp(args[1], "-w") == 0) {
+      // Check if there's a -w flag (write to file)
+      if (arg_count < 3) {
+        fprintf(stderr, "history: -w: filename argument required\n");
+        return;
+      }
+      
+      // Write history to file
+      char *filename = args[2];
+      FILE *file = fopen(filename, "w");
+      if (file == NULL) {
+        perror("history");
+        return;
+      }
+      
+      // Write all commands in history to file
+      for (int i = 0; i < history_count; i++) {
+        fprintf(file, "%s\n", history_commands[i]);
+      }
+      
+      fclose(file);
+      return; // Don't print history after writing to file
     } else {
       // Check if there's a limit argument
       int limit = history_count;
@@ -1043,6 +1065,28 @@ while(1){
         strncpy(history_commands[history_count], line, sizeof(history_commands[history_count]) - 1);
         history_commands[history_count][sizeof(history_commands[history_count]) - 1] = '\0';
         history_count++;
+      }
+      
+      fclose(file);
+      continue;
+    } else if (arg_count > 1 && strcmp(args[1], "-w") == 0) {
+      // Check if there's a -w flag (write to file)
+      if (arg_count < 3) {
+        fprintf(stderr, "history: -w: filename argument required\n");
+        continue;
+      }
+      
+      // Write history to file
+      char *filename = args[2];
+      FILE *file = fopen(filename, "w");
+      if (file == NULL) {
+        perror("history");
+        continue;
+      }
+      
+      // Write all commands in history to file
+      for (int i = 0; i < history_count; i++) {
+        fprintf(file, "%s\n", history_commands[i]);
       }
       
       fclose(file);
