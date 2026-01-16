@@ -1389,5 +1389,18 @@ while(1){
   }
 }  // End of main while loop
 
+  // Save history to HISTFILE on exit
+  histfile = getenv("HISTFILE");
+  if (histfile != NULL) {
+    FILE *file = fopen(histfile, "w");
+    if (file != NULL) {
+      // Write all commands in history to file
+      for (int i = 0; i < history_count; i++) {
+        fprintf(file, "%s\n", history_commands[i]);
+      }
+      fclose(file);
+    }
+  }
+
   return 0;
 }
