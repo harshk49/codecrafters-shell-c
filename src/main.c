@@ -238,7 +238,8 @@ char* read_input_with_completion(const char *prompt) {
   static int last_prefix_len = 0;
   static int history_position = -1;  // -1 means not navigating history
   static char current_input[1024];   // Store current input when navigating history
-  int pos = 0;
+  int pos = 0;       // Current position in buffer
+  int cursor = 0;    // Current cursor position (can be different from pos)
   
   printf("%s", prompt);
   fflush(stdout);
@@ -274,9 +275,9 @@ char* read_input_with_completion(const char *prompt) {
       return NULL;
     }
     
-    // Handle escape sequences (arrow keys)
+    // Handle escape sequences (arrow keys, home, end, delete)
     if (c == 27) {  // ESC
-      char seq[2];
+      char seq[3];
       if (read(STDIN_FILENO, &seq[0], 1) != 1) break;
       if (read(STDIN_FILENO, &seq[1], 1) != 1) break;
       
@@ -293,15 +294,22 @@ char* read_input_with_completion(const char *prompt) {
               history_position--;
             }
             
-            // Clear current line
-            while (pos > 0) {
-              printf("\b \b");
-              pos--;
+            // Move cursor to beginning and clear line
+            while (cursor > 0) {
+              printf("\b");
+              cursor--;
+            }
+            for (int i = 0; i < pos; i++) {
+              printf(" ");
+            }
+            for (int i = 0; i < pos; i++) {
+              printf("\b");
             }
             
             // Display history command
             strcpy(buffer, history_commands[history_position]);
             pos = strlen(buffer);
+            cursor = pos;
             printf("%s", buffer);
             fflush(stdout);
           }
@@ -310,52 +318,258 @@ char* read_input_with_completion(const char *prompt) {
         } else if (seq[1] == 'B') {
           // Down arrow - navigate to next command
           if (history_position != -1) {
-            // Clear current line
-            while (pos > 0) {
-              printf("\b \b");
-              pos--;
+            // Move cursor to beginning and clear line
+            while (cursor > 0) {
+              printf("\b");
+              cursor--;
+            }
+            for (int i = 0; i < pos; i++) {
+              printf(" ");
+            }
+            for (int i = 0; i < pos; i++) {
+              printf("\b");
             }
             
             if (history_position < history_count - 1) {
               history_position++;
               strcpy(buffer, history_commands[history_position]);
               pos = strlen(buffer);
+              cursor = pos;
               printf("%s", buffer);
             } else {
               // Restore original input
               history_position = -1;
               strcpy(buffer, current_input);
               pos = strlen(buffer);
+              cursor = pos;
               printf("%s", buffer);
             }
             fflush(stdout);
           }
           tab_count = 0;
           continue;
+        } else if (seq[1] == 'C') {
+          // Right arrow - move cursor right
+          if (cursor < pos) {
+            printf("\033[C");  // Move cursor right
+            cursor++;
+            fflush(stdout);
+          }
+          tab_count = 0;
+          continue;
+        } else if (seq[1] == 'D') {
+          // Left arrow - move cursor left
+          if (cursor > 0) {
+            printf("\033[D");  // Move cursor left
+            cursor--;
+            fflush(stdout);
+          }
+          tab_count = 0;
+          continue;
+        } else if (seq[1] == 'H') {
+          // Home key - move to beginning
+          while (cursor > 0) {
+            printf("\b");
+            cursor--;
+          }
+          fflush(stdout);
+          tab_count = 0;
+          continue;
+        } else if (seq[1] == 'F') {
+          // End key - move to end
+          while (cursor < pos) {
+            printf("\033[C");
+            cursor++;
+          }
+          fflush(stdout);
+          tab_count = 0;
+          continue;
+        } else if (seq[1] == '3') {
+          // Delete key (reads one more character: '~')
+          if (read(STDIN_FILENO, &seq[2], 1) == 1 && seq[2] == '~') {
+            if (cursor < pos) {
+              // Shift characters left
+              for (int i = cursor; i < pos - 1; i++) {
+                buffer[i] = buffer[i + 1];
+              }
+              pos--;
+              // Redraw from cursor to end
+              for (int i = cursor; i < pos; i++) {
+                printf("%c", buffer[i]);
+              }
+              printf(" \b");  // Clear last character
+              // Move cursor back to position
+              for (int i = cursor; i < pos; i++) {
+                printf("\b");
+              }
+              fflush(stdout);
+            }
+          }
+          tab_count = 0;
+          history_position = -1;
+          continue;
         }
       }
       continue;
     }
     
+    // Ctrl+A - move to beginning of line
+    if (c == 1) {
+      while (cursor > 0) {
+        printf("\b");
+        cursor--;
+      }
+      fflush(stdout);
+      tab_count = 0;
+      continue;
+    }
+    
+    // Ctrl+E - move to end of line
+    if (c == 5) {
+      while (cursor < pos) {
+        printf("\033[C");
+        cursor++;
+      }
+      fflush(stdout);
+      tab_count = 0;
+      continue;
+    }
+    
+    // Ctrl+K - delete from cursor to end of line
+    if (c == 11) {
+      if (cursor < pos) {
+        // Clear from cursor to end
+        for (int i = cursor; i < pos; i++) {
+          printf(" ");
+        }
+        for (int i = cursor; i < pos; i++) {
+          printf("\b");
+        }
+        pos = cursor;
+        fflush(stdout);
+        tab_count = 0;
+        history_position = -1;
+      }
+      continue;
+    }
+    
+    // Ctrl+U - delete from beginning to cursor
+    if (c == 21) {
+      if (cursor > 0) {
+        // Shift remaining text to beginning
+        for (int i = 0; i < pos - cursor; i++) {
+          buffer[i] = buffer[cursor + i];
+        }
+        pos -= cursor;
+        // Move cursor to beginning
+        while (cursor > 0) {
+          printf("\b");
+          cursor--;
+        }
+        // Redraw line
+        for (int i = 0; i < pos; i++) {
+          printf("%c", buffer[i]);
+        }
+        // Clear remaining characters
+        for (int i = 0; i < cursor; i++) {
+          printf(" ");
+        }
+        // Move cursor back to beginning
+        for (int i = 0; i < pos + cursor; i++) {
+          printf("\b");
+        }
+        cursor = 0;
+        fflush(stdout);
+        tab_count = 0;
+        history_position = -1;
+      }
+      continue;
+    }
+    
+    // Ctrl+W - delete previous word
+    if (c == 23) {
+      if (cursor > 0) {
+        int old_cursor = cursor;
+        // Skip trailing spaces
+        while (cursor > 0 && buffer[cursor - 1] == ' ') {
+          cursor--;
+        }
+        // Delete word characters
+        while (cursor > 0 && buffer[cursor - 1] != ' ') {
+          cursor--;
+        }
+        int deleted = old_cursor - cursor;
+        
+        // Shift remaining text
+        for (int i = cursor; i < pos - deleted; i++) {
+          buffer[i] = buffer[i + deleted];
+        }
+        pos -= deleted;
+        
+        // Move cursor back
+        for (int i = 0; i < deleted; i++) {
+          printf("\b");
+        }
+        // Redraw from cursor to end
+        for (int i = cursor; i < pos; i++) {
+          printf("%c", buffer[i]);
+        }
+        // Clear deleted characters
+        for (int i = 0; i < deleted; i++) {
+          printf(" ");
+        }
+        // Move cursor back to position
+        for (int i = cursor; i < pos + deleted; i++) {
+          printf("\b");
+        }
+        fflush(stdout);
+        tab_count = 0;
+        history_position = -1;
+      }
+      continue;
+    }
+    
     if (c == '\t') {
-      // Tab key - handle completion
-      handle_tab_completion(buffer, &pos, &tab_count, last_prefix, &last_prefix_len);
+      // Tab key - handle completion (only at end of line)
+      if (cursor == pos) {
+        handle_tab_completion(buffer, &pos, &tab_count, last_prefix, &last_prefix_len);
+        cursor = pos;
+      } else {
+        // Ring bell if not at end
+        printf("\x07");
+        fflush(stdout);
+      }
     } else if (c == '\n') {
       // Enter key
       buffer[pos] = '\0';
       printf("\n");
       fflush(stdout);
-      tab_count = 0;  // Reset tab count on enter
-      history_position = -1;  // Reset history position
+      tab_count = 0;
+      history_position = -1;
       break;
     } else if (c == 127 || c == 8) {
       // Backspace
-      if (pos > 0) {
+      if (cursor > 0) {
+        // Shift characters left
+        for (int i = cursor - 1; i < pos - 1; i++) {
+          buffer[i] = buffer[i + 1];
+        }
         pos--;
-        printf("\b \b");
+        cursor--;
+        // Move cursor back
+        printf("\b");
+        // Redraw from cursor to end
+        for (int i = cursor; i < pos; i++) {
+          printf("%c", buffer[i]);
+        }
+        printf(" \b");  // Clear last character
+        // Move cursor back to position
+        for (int i = cursor; i < pos; i++) {
+          printf("\b");
+        }
         fflush(stdout);
-        tab_count = 0;  // Reset tab count on any other input
-        history_position = -1;  // Reset history position when editing
+        tab_count = 0;
+        history_position = -1;
       }
     } else if (c == 4) {
       // Ctrl+D (EOF)
@@ -366,11 +580,31 @@ char* read_input_with_completion(const char *prompt) {
     } else if (c >= 32 && c < 127) {
       // Printable character
       if (pos < 1023) {
-        buffer[pos++] = c;
+        // Insert character at cursor position
+        if (cursor < pos) {
+          // Shift characters right
+          for (int i = pos; i > cursor; i--) {
+            buffer[i] = buffer[i - 1];
+          }
+        }
+        buffer[cursor] = c;
+        pos++;
+        cursor++;
+        // Print character
         printf("%c", c);
+        // Redraw characters after cursor
+        if (cursor < pos) {
+          for (int i = cursor; i < pos; i++) {
+            printf("%c", buffer[i]);
+          }
+          // Move cursor back to position
+          for (int i = cursor; i < pos; i++) {
+            printf("\b");
+          }
+        }
         fflush(stdout);
-        tab_count = 0;  // Reset tab count on any other input
-        history_position = -1;  // Reset history position when editing
+        tab_count = 0;
+        history_position = -1;
       }
     }
   }
