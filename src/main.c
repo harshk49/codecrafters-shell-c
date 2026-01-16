@@ -612,6 +612,7 @@ void execute_builtin(char **args, int arg_count) {
       }
       
       fclose(file);
+      return; // Don't print history after reading from file
     } else {
       // Check if there's a limit argument
       int limit = history_count;
