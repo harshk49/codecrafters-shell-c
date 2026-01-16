@@ -582,22 +582,54 @@ void execute_builtin(char **args, int arg_count) {
       printf("%s\n", cwd);
     }
   } else if (strcmp(args[0], "history") == 0) {
-    // Check if there's a limit argument
-    int limit = history_count;
-    int start_index = 0;
-    
-    if (arg_count > 1) {
-      // Parse the limit
-      limit = atoi(args[1]);
-      if (limit > 0 && limit < history_count) {
-        start_index = history_count - limit;
-      } else {
-        start_index = 0;
+    // Check if there's a -r flag (read from file)
+    if (arg_count > 1 && strcmp(args[1], "-r") == 0) {
+      if (arg_count < 3) {
+        fprintf(stderr, "history: -r: filename argument required\n");
+        return;
       }
-    }
-    
-    for (int i = start_index; i < history_count; i++) {
-      printf("%5d  %s\n", i + 1, history_commands[i]);
+      
+      // Read history from file
+      char *filename = args[2];
+      FILE *file = fopen(filename, "r");
+      if (file == NULL) {
+        perror("history");
+        return;
+      }
+      
+      char line[1024];
+      while (fgets(line, sizeof(line), file) != NULL && history_count < MAX_HISTORY) {
+        // Remove trailing newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+          line[len-1] = '\0';
+        }
+        
+        // Add to history (including empty lines)
+        strncpy(history_commands[history_count], line, sizeof(history_commands[history_count]) - 1);
+        history_commands[history_count][sizeof(history_commands[history_count]) - 1] = '\0';
+        history_count++;
+      }
+      
+      fclose(file);
+    } else {
+      // Check if there's a limit argument
+      int limit = history_count;
+      int start_index = 0;
+      
+      if (arg_count > 1) {
+        // Parse the limit
+        limit = atoi(args[1]);
+        if (limit > 0 && limit < history_count) {
+          start_index = history_count - limit;
+        } else {
+          start_index = 0;
+        }
+      }
+      
+      for (int i = start_index; i < history_count; i++) {
+        printf("%5d  %s\n", i + 1, history_commands[i]);
+      }
     }
   } else if (strcmp(args[0], "type") == 0) {
     if (arg_count < 2) {
