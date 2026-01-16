@@ -876,6 +876,29 @@ int main(int argc, char *argv[]) {
   // Flush after every printf
   setbuf(stdout, NULL);
   
+  // Load history from HISTFILE environment variable on startup
+  char *histfile = getenv("HISTFILE");
+  if (histfile != NULL) {
+    FILE *file = fopen(histfile, "r");
+    if (file != NULL) {
+      char line[1024];
+      while (fgets(line, sizeof(line), file) != NULL && history_count < MAX_HISTORY) {
+        // Remove trailing newline
+        size_t len = strlen(line);
+        if (len > 0 && line[len-1] == '\n') {
+          line[len-1] = '\0';
+        }
+        
+        // Add to history (including empty lines)
+        strncpy(history_commands[history_count], line, sizeof(history_commands[history_count]) - 1);
+        history_commands[history_count][sizeof(history_commands[history_count]) - 1] = '\0';
+        history_count++;
+      }
+      
+      fclose(file);
+    }
+  }
+  
 //REPL Loop
 while(1){
   // Read User's Input with tab completion support
