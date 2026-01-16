@@ -21,6 +21,7 @@ static const char *builtin_commands[] = {
 #define MAX_HISTORY 1000
 static char history_commands[MAX_HISTORY][1024];
 static int history_count = 0;
+static int history_last_written_index = 0;  // Track last index written to file
 
 // Compare function for qsort to sort strings alphabetically
 int string_compare(const void *a, const void *b) {
@@ -635,6 +636,31 @@ void execute_builtin(char **args, int arg_count) {
       
       fclose(file);
       return; // Don't print history after writing to file
+    } else if (arg_count > 1 && strcmp(args[1], "-a") == 0) {
+      // Check if there's a -a flag (append to file)
+      if (arg_count < 3) {
+        fprintf(stderr, "history: -a: filename argument required\n");
+        return;
+      }
+      
+      // Append new history commands to file
+      char *filename = args[2];
+      FILE *file = fopen(filename, "a");
+      if (file == NULL) {
+        perror("history");
+        return;
+      }
+      
+      // Write only commands that haven't been written yet
+      for (int i = history_last_written_index; i < history_count; i++) {
+        fprintf(file, "%s\n", history_commands[i]);
+      }
+      
+      // Update the last written index
+      history_last_written_index = history_count;
+      
+      fclose(file);
+      return; // Don't print history after appending to file
     } else {
       // Check if there's a limit argument
       int limit = history_count;
@@ -1088,6 +1114,31 @@ while(1){
       for (int i = 0; i < history_count; i++) {
         fprintf(file, "%s\n", history_commands[i]);
       }
+      
+      fclose(file);
+      continue;
+    } else if (arg_count > 1 && strcmp(args[1], "-a") == 0) {
+      // Check if there's a -a flag (append to file)
+      if (arg_count < 3) {
+        fprintf(stderr, "history: -a: filename argument required\n");
+        continue;
+      }
+      
+      // Append new history commands to file
+      char *filename = args[2];
+      FILE *file = fopen(filename, "a");
+      if (file == NULL) {
+        perror("history");
+        continue;
+      }
+      
+      // Write only commands that haven't been written yet
+      for (int i = history_last_written_index; i < history_count; i++) {
+        fprintf(file, "%s\n", history_commands[i]);
+      }
+      
+      // Update the last written index
+      history_last_written_index = history_count;
       
       fclose(file);
       continue;
