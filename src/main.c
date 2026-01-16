@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
+#include <sys/ioctl.h>
 #include <ctype.h>
 #include <fcntl.h>
 #include <termios.h>
@@ -68,21 +69,138 @@ int find_longest_common_prefix(char **matches, int match_count, char *lcp, int m
   return lcp_len;
 }
 
-// Function to handle tab completion
-void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_prefix, int *last_prefix_len) {
-  // Only complete if we're at the beginning (first word)
-  int i;
-  for (i = 0; i < *pos; i++) {
-    if (buffer[i] == ' ') {
-      *tab_count = 0;  // Reset tab count if we're not on first word
-      return; // Not the first word, don't complete
+// Check if a path is a directory
+int is_directory(const char *path) {
+  struct stat st;
+  if (stat(path, &st) == 0) {
+    return S_ISDIR(st.st_mode);
+  }
+  return 0;
+}
+
+// Escape special characters in a string for shell
+void escape_string(const char *src, char *dst, int max_len) {
+  int j = 0;
+  for (int i = 0; src[i] != '\0' && j < max_len - 2; i++) {
+    if (src[i] == ' ' || src[i] == '\'' || src[i] == '"' || 
+        src[i] == '\\' || src[i] == '&' || src[i] == '|' ||
+        src[i] == ';' || src[i] == '(' || src[i] == ')' ||
+        src[i] == '<' || src[i] == '>' || src[i] == '$' ||
+        src[i] == '`' || src[i] == '*' || src[i] == '?' ||
+        src[i] == '[' || src[i] == ']' || src[i] == '#') {
+      dst[j++] = '\\';
+    }
+    dst[j++] = src[i];
+  }
+  dst[j] = '\0';
+}
+
+// Complete file/directory names
+int complete_paths(const char *prefix, char matches[][256], int max_matches) {
+  int match_count = 0;
+  char dir_path[1024] = ".";
+  char file_prefix[256] = "";
+  
+  // Extract directory and file prefix
+  const char *last_slash = strrchr(prefix, '/');
+  if (last_slash != NULL) {
+    int dir_len = last_slash - prefix;
+    if (dir_len == 0) {
+      strcpy(dir_path, "/");
+    } else {
+      strncpy(dir_path, prefix, dir_len);
+      dir_path[dir_len] = '\0';
+    }
+    strncpy(file_prefix, last_slash + 1, sizeof(file_prefix) - 1);
+    file_prefix[sizeof(file_prefix) - 1] = '\0';
+  } else {
+    strncpy(file_prefix, prefix, sizeof(file_prefix) - 1);
+    file_prefix[sizeof(file_prefix) - 1] = '\0';
+  }
+  
+  // Handle tilde expansion
+  if (dir_path[0] == '~') {
+    char *home = getenv("HOME");
+    if (home != NULL) {
+      char expanded[1024];
+      if (dir_path[1] == '\0' || dir_path[1] == '/') {
+        snprintf(expanded, sizeof(expanded), "%s%s", home, dir_path + 1);
+        strncpy(dir_path, expanded, sizeof(dir_path) - 1);
+        dir_path[sizeof(dir_path) - 1] = '\0';
+      }
     }
   }
   
-  int len = *pos;
+  DIR *d = opendir(dir_path);
+  if (d != NULL) {
+    struct dirent *entry;
+    int prefix_len = strlen(file_prefix);
+    
+    while ((entry = readdir(d)) != NULL && match_count < max_matches) {
+      // Skip . and ..
+      if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+        continue;
+      }
+      
+      // Check if entry matches prefix
+      if (prefix_len == 0 || strncmp(entry->d_name, file_prefix, prefix_len) == 0) {
+        // Build full path for type checking
+        char full_path[2048];
+        snprintf(full_path, sizeof(full_path), "%s/%s", dir_path, entry->d_name);
+        
+        // Add to matches with / for directories
+        if (last_slash != NULL) {
+          int base_len = last_slash - prefix + 1;
+          strncpy(matches[match_count], prefix, base_len);
+          matches[match_count][base_len] = '\0';
+          strncat(matches[match_count], entry->d_name, 255 - base_len);
+        } else {
+          strncpy(matches[match_count], entry->d_name, 255);
+        }
+        
+        // Add trailing / for directories
+        if (is_directory(full_path)) {
+          int len = strlen(matches[match_count]);
+          if (len < 254) {
+            matches[match_count][len] = '/';
+            matches[match_count][len + 1] = '\0';
+          }
+        }
+        
+        matches[match_count][255] = '\0';
+        match_count++;
+      }
+    }
+    closedir(d);
+  }
+  
+  return match_count;
+}
+
+// Function to handle tab completion
+void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_prefix, int *last_prefix_len) {
+  // Determine if we're completing the first word (command) or arguments (files/paths)
+  int i;
+  int is_first_word = 1;
+  int word_start = 0;
+  
+  // Find the start of the current word
+  for (i = *pos - 1; i >= 0; i--) {
+    if (buffer[i] == ' ') {
+      word_start = i + 1;
+      is_first_word = 0;
+      break;
+    }
+  }
+  
+  // Extract current word being completed
+  int len = *pos - word_start;
+  char current_word[1024];
+  strncpy(current_word, buffer + word_start, len);
+  current_word[len] = '\0';
   
   // Check if the prefix has changed since last tab press
-  if (len != *last_prefix_len || strncmp(buffer, last_prefix, len) != 0) {
+  if (len != *last_prefix_len || strncmp(current_word, last_prefix, len) != 0) {
     *tab_count = 0;  // Reset tab count if prefix changed
   }
   
@@ -90,63 +208,75 @@ void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_pr
   (*tab_count)++;
   
   // Save current prefix
-  strncpy(last_prefix, buffer, len);
+  strncpy(last_prefix, current_word, len);
   last_prefix[len] = '\0';
   *last_prefix_len = len;
   
   char matches[1024][256];  // Store potential matches
   int match_count = 0;
+  int completing_path = 0;  // Flag to indicate if we're completing a path
   
-  // Check builtin commands
-  for (i = 0; builtin_commands[i] != NULL; i++) {
-    if (strncmp(buffer, builtin_commands[i], len) == 0) {
-      strncpy(matches[match_count], builtin_commands[i], 255);
-      matches[match_count][255] = '\0';
-      match_count++;
+  // Check if current word looks like a path (contains / or starts with . or ~)
+  if (strchr(current_word, '/') != NULL || 
+      current_word[0] == '.' || 
+      current_word[0] == '~' ||
+      !is_first_word) {
+    // Complete as file/directory path
+    completing_path = 1;
+    match_count = complete_paths(current_word, matches, 1024);
+  } else {
+    // Complete as command (first word only)
+    // Check builtin commands
+    for (i = 0; builtin_commands[i] != NULL; i++) {
+      if (strncmp(current_word, builtin_commands[i], len) == 0) {
+        strncpy(matches[match_count], builtin_commands[i], 255);
+        matches[match_count][255] = '\0';
+        match_count++;
+      }
     }
-  }
-  
-  // Check executables in PATH
-  char *path_env = getenv("PATH");
-  if (path_env != NULL) {
-    char path_copy[4096];
-    strncpy(path_copy, path_env, sizeof(path_copy) - 1);
-    path_copy[sizeof(path_copy) - 1] = '\0';
     
-    char *dir = strtok(path_copy, ":");
-    while (dir != NULL && match_count < 1024) {
-      DIR *d = opendir(dir);
-      if (d != NULL) {
-        struct dirent *entry;
-        while ((entry = readdir(d)) != NULL && match_count < 1024) {
-          // Check if the entry name starts with our prefix
-          if (strncmp(entry->d_name, buffer, len) == 0) {
-            // Build full path to check if it's executable
-            char full_path[2048];
-            snprintf(full_path, sizeof(full_path), "%s/%s", dir, entry->d_name);
-            
-            // Check if it's executable
-            if (access(full_path, X_OK) == 0) {
-              // Check if we already have this match (avoid duplicates)
-              int duplicate = 0;
-              for (int j = 0; j < match_count; j++) {
-                if (strcmp(matches[j], entry->d_name) == 0) {
-                  duplicate = 1;
-                  break;
-                }
-              }
+    // Check executables in PATH
+    char *path_env = getenv("PATH");
+    if (path_env != NULL) {
+      char path_copy[4096];
+      strncpy(path_copy, path_env, sizeof(path_copy) - 1);
+      path_copy[sizeof(path_copy) - 1] = '\0';
+      
+      char *dir = strtok(path_copy, ":");
+      while (dir != NULL && match_count < 1024) {
+        DIR *d = opendir(dir);
+        if (d != NULL) {
+          struct dirent *entry;
+          while ((entry = readdir(d)) != NULL && match_count < 1024) {
+            // Check if the entry name starts with our prefix
+            if (strncmp(entry->d_name, current_word, len) == 0) {
+              // Build full path to check if it's executable
+              char full_path[2048];
+              snprintf(full_path, sizeof(full_path), "%s/%s", dir, entry->d_name);
               
-              if (!duplicate) {
-                strncpy(matches[match_count], entry->d_name, 255);
-                matches[match_count][255] = '\0';
-                match_count++;
+              // Check if it's executable
+              if (access(full_path, X_OK) == 0) {
+                // Check if we already have this match (avoid duplicates)
+                int duplicate = 0;
+                for (int j = 0; j < match_count; j++) {
+                  if (strcmp(matches[j], entry->d_name) == 0) {
+                    duplicate = 1;
+                    break;
+                  }
+                }
+                
+                if (!duplicate) {
+                  strncpy(matches[match_count], entry->d_name, 255);
+                  matches[match_count][255] = '\0';
+                  match_count++;
+                }
               }
             }
           }
+          closedir(d);
         }
-        closedir(d);
+        dir = strtok(NULL, ":");
       }
-      dir = strtok(NULL, ":");
     }
   }
   
@@ -161,17 +291,43 @@ void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_pr
   // If exactly one match, complete it
   if (match_count == 1) {
     int match_len = strlen(matches[0]);
-    // Copy the rest of the match
-    for (i = len; i < match_len; i++) {
-      buffer[i] = matches[0][i];
-      printf("%c", matches[0][i]);
-      fflush(stdout);
+    int old_pos = *pos;
+    
+    // Clear the current word
+    for (i = 0; i < len; i++) {
+      printf("\b \b");
     }
-    // Add trailing space
-    buffer[match_len] = ' ';
-    printf(" ");
+    
+    // Determine if match needs escaping (for paths with spaces)
+    char escaped_match[512];
+    int is_dir = (matches[0][match_len - 1] == '/');
+    
+    if (completing_path && !is_dir) {
+      escape_string(matches[0], escaped_match, sizeof(escaped_match));
+    } else {
+      strncpy(escaped_match, matches[0], sizeof(escaped_match) - 1);
+      escaped_match[sizeof(escaped_match) - 1] = '\0';
+    }
+    
+    int escaped_len = strlen(escaped_match);
+    
+    // Write the completed word (starting from word_start)
+    for (i = 0; i < escaped_len; i++) {
+      buffer[word_start + i] = escaped_match[i];
+      printf("%c", escaped_match[i]);
+    }
     fflush(stdout);
-    *pos = match_len + 1;
+    
+    *pos = word_start + escaped_len;
+    
+    // Add trailing space only if not a directory
+    if (!is_dir) {
+      buffer[*pos] = ' ';
+      printf(" ");
+      fflush(stdout);
+      (*pos)++;
+    }
+    
     *tab_count = 0;  // Reset tab count after completion
   }
   // If multiple matches, try to complete to longest common prefix
@@ -187,13 +343,18 @@ void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_pr
     
     // If LCP is longer than current input, complete to LCP
     if (lcp_len > len) {
-      // Complete to LCP
-      for (i = len; i < lcp_len; i++) {
-        buffer[i] = lcp[i];
-        printf("%c", lcp[i]);
-        fflush(stdout);
+      // Clear current word
+      for (i = 0; i < len; i++) {
+        printf("\b \b");
       }
-      *pos = lcp_len;
+      
+      // Write LCP
+      for (i = 0; i < lcp_len; i++) {
+        buffer[word_start + i] = lcp[i];
+        printf("%c", lcp[i]);
+      }
+      fflush(stdout);
+      *pos = word_start + lcp_len;
       *tab_count = 0;  // Reset tab count after completion
     }
     // Otherwise, handle double-tab behavior
@@ -207,15 +368,32 @@ void handle_tab_completion(char *buffer, int *pos, int *tab_count, char *last_pr
         // Sort matches alphabetically
         qsort(match_ptrs, match_count, sizeof(char *), string_compare);
         
-        // Print newline and display matches
+        // Calculate column width for nice formatting
+        int max_len = 0;
+        for (i = 0; i < match_count; i++) {
+          int len = strlen(match_ptrs[i]);
+          if (len > max_len) max_len = len;
+        }
+        max_len += 2;  // Add padding
+        
+        // Get terminal width (default to 80 if unable to determine)
+        int term_width = 80;
+        struct winsize ws;
+        if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+          term_width = ws.ws_col;
+        }
+        
+        int cols = term_width / max_len;
+        if (cols < 1) cols = 1;
+        
+        // Print newline and display matches in columns
         printf("\n");
         for (i = 0; i < match_count; i++) {
-          if (i > 0) {
-            printf("  ");  // Two spaces between matches
+          printf("%-*s", max_len, match_ptrs[i]);
+          if ((i + 1) % cols == 0 || i == match_count - 1) {
+            printf("\n");
           }
-          printf("%s", match_ptrs[i]);
         }
-        printf("\n");
         
         // Redisplay prompt and current command
         printf("$ ");
